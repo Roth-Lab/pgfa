@@ -1,5 +1,7 @@
 import numpy as np
 
+from pgfa.math_utils import log_beta
+
 
 class LinearSumDistribution(object):
     def __init__(self, model):
@@ -64,18 +66,18 @@ class FiniteFeatureAllocationModel(object):
 
         m = np.sum(self.latent_values, axis=0)
 
-        a = self.feature_weight_params[:, 0]
+        a = self.feature_weight_params[0]
 
-        b = self.feature_weight_params[:, 1]
+        b = self.feature_weight_params[1]
 
         a_new = a + m
 
         b_new = b + (N - m)
 
         for k in range(self.num_features):
-            log_p += log_beta(a_new[k], b_new[k]) - log_beta(a[k], b[k])
+            log_p += log_beta(a_new[k], b_new[k]) - log_beta(a, b)
 
-            log_p += self.feature_prior_dist.log_p(self.feature_params[k], self.feature_prior_params[k])
+            log_p += self.feature_prior_dist.log_p(self.feature_params[k], self.feature_prior_params)
 
         # Likelihood
         for n in range(self.num_data_points):
