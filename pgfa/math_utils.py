@@ -4,6 +4,22 @@ import numpy as np
 
 
 @numba.jit(nopython=True)
+def get_linear_sum_params(z, params):
+    """ Return the $\sum_{k} z_{k} \times \theta_{k}$
+    """
+    t = len(z)
+
+    D = params.shape[1]
+
+    f = np.zeros((D,))
+
+    for d in range(D):
+        f[d] = np.sum(params[:t, d] * z) + 1
+
+    return f
+
+
+@numba.jit(nopython=True)
 def log_beta(a, b):
     return log_gamma(a) + log_gamma(b) - log_gamma(a + b)
 
