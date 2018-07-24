@@ -31,7 +31,7 @@ class Distribution(object):
                 grad = _grad_log_p_wrt_data_bulk(f, data, params)
 
         else:
-            grad = f(data, params)
+            grad = f(data[0], params)
 
         return np.atleast_2d(grad)
 
@@ -50,7 +50,7 @@ class Distribution(object):
                 grad = _grad_log_p_wrt_params_bulk(f, data, params)
 
         else:
-            grad = f(data, params)
+            grad = f(data[0], params)
 
         return np.atleast_2d(grad)
 
