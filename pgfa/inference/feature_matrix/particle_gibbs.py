@@ -20,7 +20,7 @@ class ParticleGibbsFeatureAllocationMatrixKernel(object):
         )
 
 
-# @numba.jit(nopython=True, parallel=True)
+@numba.jit(nopython=True)
 def update_feature_matrix_by_particle_gibbs_collapsed(log_p_fn, rho_priors, theta, X, Z):
     K = Z.shape[1]
 
@@ -54,7 +54,8 @@ def update_feature_matrix_by_particle_gibbs_collapsed(log_p_fn, rho_priors, thet
             z[sigma]
         )
 
-        Z[n, sigma] = z
+        for k in range(K):
+            Z[n, sigma[k]] = z[k]
 
     return Z
 
