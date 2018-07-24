@@ -38,10 +38,15 @@ def grad_log_poisson_pdf_wrt_params(x, params):
 
     rate = unpack_poisson_params(params)
 
-    if rate == 0:
-        return np.nan
+    grad = np.empty((1,))
 
-    return x / rate - 1
+    if rate == 0:
+        grad[0] = np.nan
+
+    else:
+        grad[0] = x / rate - 1
+
+    return grad
 
 
 @numba.jit(nopython=True)
