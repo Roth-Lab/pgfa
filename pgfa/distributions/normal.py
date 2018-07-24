@@ -18,7 +18,7 @@ class NormalDistribution(Distribution):
     def get_log_p_fn(self):
         return log_normal_pdf
 
-    def rvs(self, params=None, size=None):
+    def rvs(self, params, size=None):
         params = self._get_params(params)
 
         mean, precision = unpack_normal_params(params)
@@ -39,7 +39,11 @@ def grad_log_normal_pdf_wrt_data(x, params):
 
     mean, precision = unpack_normal_params(params)
 
-    return - precision * (x - mean)
+    grad = np.empty((1,))
+
+    grad[0] = - precision * (x - mean)
+
+    return grad
 
 
 @numba.jit(nopython=True)
@@ -48,7 +52,7 @@ def grad_log_normal_pdf_wrt_params(x, params):
 
     mean, precision = unpack_normal_params(params)
 
-    grad = np.zeros(2)
+    grad = np.zeros((2,))
 
     grad[0] = precision * (x - mean)
 
