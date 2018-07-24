@@ -4,8 +4,10 @@ import scipy.stats
 
 from pgfa.distributions import NormalDistribution, NormalGammaProductDistribution
 from pgfa.distributions.base import Distribution
-from pgfa.inference.feature_matrix import GibbsFeatureAllocationMatrixKernel, RowGibbsFeatureAllocationMatrixKernel
+from pgfa.inference.feature_matrix import GibbsFeatureAllocationMatrixKernel, RowGibbsFeatureAllocationMatrixKernel, \
+    ParticleGibbsFeatureAllocationMatrixKernel
 from pgfa.models import FiniteFeatureAllocationModel
+from pgfa.utils import lof_sort
 
 import pgfa.distributions.normal
 
@@ -13,56 +15,73 @@ import pgfa.distributions.normal
 def main():
     X, V, Z = get_data()
 
-    feature_dist = NormalMeanDistribution(10)
+    #=========================================================================
+    # Gibbs
+    #=========================================================================
+    print('Gibbs')
 
-    feature_prior_dist = NormalDistribution()
+    run(X, Z, V, GibbsFeatureAllocationMatrixKernel())
 
-    feature_prior_params = np.array([0, 1])
+    print('Particle Gibbs')
 
-    feature_weight_params = np.array([1, 1])
+    run(X, Z, V, ParticleGibbsFeatureAllocationMatrixKernel())
 
-    model = FiniteFeatureAllocationModel(
-        X,
-        feature_dist,
-        feature_prior_dist,
-        feature_prior_params,
-        feature_weight_params=feature_weight_params,
-        feature_params=np.ones((2, 1)) * 10,
-        latent_values=Z,
-        num_features=2
-    )
+    print('Row Gibbs')
 
-    fm_updater = GibbsFeatureAllocationMatrixKernel()
-
-    for i in range(10):
-        print(i)
-        model.latent_values = fm_updater.update(model)
-
-    print(model.latent_values)
-
-    fm_updater = RowGibbsFeatureAllocationMatrixKernel()
-
-    for i in range(10):
-        print(i)
-        model.latent_values = fm_updater.update(model)
-
-    print(model.latent_values)
+    run(X, Z, V, RowGibbsFeatureAllocationMatrixKernel())
 
 
 def get_data():
+    K = 10
+
     N = 10
 
     X = scipy.stats.norm.rvs(10, 0.01, size=(N, 1))
 
-    V = np.ones((2, 1)) * 10
+    V = np.ones((K, 1)) * 100
 
-    Z = np.zeros((N, 2), dtype=np.int)
+    V[:2] = 10
+
+    Z = np.zeros((N, K), dtype=np.int)
 
     Z[: N // 2, 0] = 1
 
     Z[N // 2:, 1] = 1
 
     return X, V, Z
+
+
+def get_model(data, init_feat_mat, init_feat_params):
+    feature_dist = NormalMeanDistribution(100)
+
+    feature_prior_dist = NormalDistribution()
+
+    feature_prior_params = np.array([0, 1])
+
+    feature_weight_params = np.array([0.01, 0.99])
+
+    return FiniteFeatureAllocationModel(
+        data,
+        feature_dist,
+        feature_prior_dist,
+        feature_prior_params,
+        feature_weight_params=feature_weight_params,
+        feature_params=init_feat_params,
+        latent_values=init_feat_mat,
+        num_features=init_feat_mat.shape[1]
+    )
+
+
+def run(data, init_feat_mat, init_feat_params, updater):
+    model = get_model(data, init_feat_mat, init_feat_params)
+
+    for i in range(200):
+        if i % 100 == 0:
+            print(i, model.log_p)
+
+        model.latent_values = updater.update(model)
+
+    print(lof_sort(model.latent_values))
 
 
 class NormalMeanDistribution(Distribution):
