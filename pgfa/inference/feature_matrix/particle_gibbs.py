@@ -30,6 +30,10 @@ def update_feature_matrix_by_particle_gibbs_collapsed(log_p_fn, rho_priors, thet
 
     np.random.shuffle(rows)
 
+    cols = np.arange(K)
+
+    np.random.shuffle(cols)
+
     for n in rows:
         m = np.sum(Z, axis=0)
 
@@ -41,21 +45,19 @@ def update_feature_matrix_by_particle_gibbs_collapsed(log_p_fn, rho_priors, thet
 
         z = Z[n]
 
-        sigma = np.arange(K)
-
-        np.random.shuffle(sigma)
-
         z = update_feature_matrix_by_particle_gibbs_collapsed_single_row(
             log_p_fn,
-            a[sigma],
-            b[sigma],
-            theta[sigma],
+            a[cols],
+            b[cols],
+            theta[cols],
             X[n],
-            z[sigma]
+            z[cols],
+            annealed=True,
+            num_particles=20
         )
 
         for k in range(K):
-            Z[n, sigma[k]] = z[k]
+            Z[n, cols[k]] = z[k]
 
     return Z
 
@@ -69,7 +71,7 @@ def update_feature_matrix_by_particle_gibbs_collapsed_single_row(
         x,
         z,
         annealed=True,
-        num_particles=5):
+        num_particles=10):
 
     K = len(z)
 
@@ -142,13 +144,13 @@ def get_ess(log_W):
 @numba.jit(nopython=True)
 def get_log_weight(log_p_fn, a, b, params, x, z):
     if len(z) == 1:
-        f_0 = get_linear_sum_params(1 - z, params)
+        f_0 = get_linear_sum_params(np.array([0]), params)
 
-        f_1 = get_linear_sum_params(z, params)
+        f_1 = get_linear_sum_params(np.array([1]), params)
 
         return log_sum_exp(np.array([
-            log_p_fn(x, f_0) + np.log(a),
-            log_p_fn(x, f_1) + np.log(b)
+            log_p_fn(x, f_1) + np.log(a),
+            log_p_fn(x, f_0) + np.log(b)
         ]))
 
     else:
@@ -272,7 +274,7 @@ def resample(log_W, particles, conditional=True, threshold=0.5):
 
     num_particles = particles.shape[0]
 
-    if get_ess(log_W) <= threshold:
+    if (get_ess(log_W) / num_particles) <= threshold:
         new_particles = np.zeros(particles.shape, dtype=np.int64)
 
         W = np.exp(log_W)
@@ -282,7 +284,7 @@ def resample(log_W, particles, conditional=True, threshold=0.5):
         W = W / np.sum(W)
 
         if conditional:
-            new_particles[0] = particles[0]  # .copy()
+            new_particles[0] = particles[0]
 
             multiplicity = np.random.multinomial(num_particles - 1, W)
 
@@ -295,7 +297,7 @@ def resample(log_W, particles, conditional=True, threshold=0.5):
 
         for k in range(num_features):
             for _ in range(multiplicity[k]):
-                new_particles[idx] = particles[k]  # .copy()
+                new_particles[idx] = particles[k]
 
                 idx += 1
 
