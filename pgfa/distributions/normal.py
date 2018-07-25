@@ -23,9 +23,9 @@ class NormalDistribution(Distribution):
 
         mean, precision = unpack_normal_params(params)
 
-        std_dev = 1 / precision
+        std_dev = 1 / np.sqrt(precision)
 
-        x = self._get_data(np.random.normal(mean, scale=std_dev, size=size))
+        x = self._get_data(np.random.normal(mean, std_dev, size=size))
 
         if size is not None:
             x = x.reshape((size, self.data_dim))
