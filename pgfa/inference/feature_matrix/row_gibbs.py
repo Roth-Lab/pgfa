@@ -65,11 +65,17 @@ class RowGibbsFeatureAllocationMatrixKernel(object):
 
 @numba.jit(nopython=True)
 def _update_feature_allocation_matrix(log_p_fn, rho_priors, theta, X, Z, Zs):
+    K = Z.shape[1]
+
     N = Z.shape[0]
 
     rows = np.arange(N)
 
     np.random.shuffle(rows)
+
+    cols = np.arange(K)
+
+    np.random.shuffle(cols)
 
     for n in rows:
         m = np.sum(Z, axis=0)
@@ -80,18 +86,37 @@ def _update_feature_allocation_matrix(log_p_fn, rho_priors, theta, X, Z, Zs):
 
         b = (N - 1 - m) + rho_priors[1]
 
-        Z[n] = _update_row(log_p_fn, a, b, theta, X[n], Z[n], Zs)
+        z = Z[n]
+
+        z = _update_row(
+            log_p_fn,
+            a[cols],
+            b[cols],
+            theta[cols],
+            X[n],
+            z[cols],
+            Zs
+        )
+
+        for k in range(K):
+            Z[n, cols[k]] = z[k]
 
     return Z
 
 
 @numba.jit(nopython=True)
 def _update_feature_allocation_matrix_ibp(log_p_fn, theta, X, Z, Zs):
+    K = Z.shape[1]
+
     N = Z.shape[0]
 
     rows = np.arange(N)
 
     np.random.shuffle(rows)
+
+    cols = np.arange(K)
+
+    np.random.shuffle(cols)
 
     for n in rows:
         m = np.sum(Z, axis=0)
@@ -102,7 +127,20 @@ def _update_feature_allocation_matrix_ibp(log_p_fn, theta, X, Z, Zs):
 
         b = (N - 1 - m)
 
-        Z[n] = _update_row(log_p_fn, a, b, theta, X[n], Z[n], Zs)
+        z = Z[n]
+
+        z = _update_row(
+            log_p_fn,
+            a[cols],
+            b[cols],
+            theta[cols],
+            X[n],
+            z[cols],
+            Zs
+        )
+
+        for k in range(K):
+            Z[n, cols[k]] = z[k]
 
     return Z
 
