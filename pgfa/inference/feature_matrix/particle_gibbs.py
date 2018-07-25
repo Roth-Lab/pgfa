@@ -6,6 +6,13 @@ from pgfa.stats import discrete_rvs
 
 
 class ParticleGibbsFeatureAllocationMatrixKernel(object):
+    def __init__(self, annealed=True, num_particles=10, resample_threshold=0.5):
+        self.annealed = annealed
+
+        self.num_particles = num_particles
+
+        self.resample_threshold = resample_threshold
+
     def update(self, model):
         feat_mat = model.latent_values.copy()
 
@@ -16,12 +23,24 @@ class ParticleGibbsFeatureAllocationMatrixKernel(object):
             model.feature_weight_params,
             model.feature_params,
             model.data,
-            feat_mat
+            feat_mat,
+            annealed=self.annealed,
+            num_particles=self.num_particles,
+            resample_threshold=self.resample_threshold
         )
 
 
 @numba.jit(nopython=True)
-def update_feature_matrix_by_particle_gibbs_collapsed(log_p_fn, rho_priors, theta, X, Z):
+def update_feature_matrix_by_particle_gibbs_collapsed(
+        log_p_fn,
+        rho_priors,
+        theta,
+        X,
+        Z,
+        annealed=True,
+        num_particles=10,
+        resample_threshold=0.5):
+
     K = Z.shape[1]
 
     N = Z.shape[0]
@@ -52,8 +71,9 @@ def update_feature_matrix_by_particle_gibbs_collapsed(log_p_fn, rho_priors, thet
             theta[cols],
             X[n],
             z[cols],
-            annealed=True,
-            num_particles=20
+            annealed=annealed,
+            num_particles=num_particles,
+            resample_threshold=resample_threshold
         )
 
         for k in range(K):
@@ -71,9 +91,14 @@ def update_feature_matrix_by_particle_gibbs_collapsed_single_row(
         x,
         z,
         annealed=True,
-        num_particles=10):
+        num_particles=10,
+        resample_threshold=0.5):
 
     K = len(z)
+
+    log_norm = np.zeros(num_particles)
+
+    log_p = np.zeros(num_particles)
 
     log_w = np.zeros((num_particles, K))
 
@@ -83,40 +108,32 @@ def update_feature_matrix_by_particle_gibbs_collapsed_single_row(
 
     particles[0] = get_conditional_path(z)
 
-    for i in numba.prange(1, num_particles):
-        if annealed:
-            particles[i, 0] = propose_annealed(log_p_fn, a, b, params, K, x, particles[i, :1])
-
-        else:
-            particles[i, 0] = propose(log_p_fn, a, b, params, x, particles[i, :1])
-
-    for i in numba.prange(num_particles):
-        if annealed:
-            log_w[i, 0] = get_log_weight_annealed(log_p_fn, a[0], b[0], params, K, x, particles[i, :1])
-
-        else:
-            log_w[i, 0] = get_log_weight(log_p_fn, a[0], b[0], params, x, particles[i, :1])
-
-        log_W[i] = log_w[i, 0]
-
-    for k in range(1, K):
+    for k in range(K):
         log_W = log_normalize(log_W)
 
-        log_W, particles = resample(log_W, particles, conditional=True)
+        log_p_old = log_p
 
-        for i in numba.prange(1, num_particles):
-            if annealed:
-                particles[i, k] = propose_annealed(log_p_fn, a, b, params, K, x, particles[i, :(k + 1)])
-
-            else:
-                particles[i, k] = propose(log_p_fn, a, b, params, x, particles[i, :(k + 1)])
+        if k > 0:
+            log_W, particles = resample(log_W, particles, conditional=True, threshold=resample_threshold)
 
         for i in numba.prange(num_particles):
-            if annealed:
-                log_w[i, k] = get_log_weight_annealed(log_p_fn, a[k], b[k], params, K, x, particles[i, :(k + 1)])
+            if i == 0:
+                idx = particles[i, k]
 
             else:
-                log_w[i, k] = get_log_weight(log_p_fn, a[k], b[k], params, x, particles[i, :(k + 1)])
+                idx = -1
+
+            if annealed:
+                particles[i, k], log_p[i], log_norm[i] = propose_annealed(
+                    log_p_fn, a, b, params, K, x, particles[i, :(k + 1)], idx=idx
+                )
+
+            else:
+                particles[i, k], log_p[i], log_norm[i] = propose(
+                    log_p_fn, a, b, params, x, particles[i, :(k + 1)], idx=idx
+                )
+
+            log_w[i, k] = log_norm[i] - log_p_old[i]
 
             log_W[i] = log_W[i] + log_w[i, k]
 
@@ -139,63 +156,6 @@ def get_ess(log_W):
     W = np.exp(log_W)
 
     return 1 / np.sum(np.square(W))
-
-
-@numba.jit(nopython=True)
-def get_log_weight(log_p_fn, a, b, params, x, z):
-    if len(z) == 1:
-        f_0 = get_linear_sum_params(np.array([0]), params)
-
-        f_1 = get_linear_sum_params(np.array([1]), params)
-
-        return log_sum_exp(np.array([
-            log_p_fn(x, f_1) + np.log(a),
-            log_p_fn(x, f_0) + np.log(b)
-        ]))
-
-    else:
-        f_old = get_linear_sum_params(z[:-1], params)
-
-        f_new = get_linear_sum_params(z, params)
-
-        return log_sum_exp(np.array([
-            log_p_fn(x, f_new) - log_p_fn(x, f_old) + np.log(a),
-            np.log(b)
-        ]))
-
-
-@numba.jit(nopython=True)
-def get_log_weight_annealed(log_p_fn, a, b, params, T, x, z):
-    if len(z) == 1:
-        return log_sum_exp(np.array([
-            np.log(a),
-            np.log(b)
-        ]))
-
-    else:
-        t = len(z)
-
-        f_old = get_linear_sum_params(z[:-1], params)
-
-        f_new = get_linear_sum_params(z, params)
-
-        log_p_old = log_p_fn(x, f_old)
-
-        log_p_new = log_p_fn(x, f_new)
-
-        if np.isinf(log_p_old):
-            return -np.inf
-
-        else:
-            return log_sum_exp(np.array([
-                ((t - 1) / (T - 1)) * log_p_new - ((t - 2) / (T - 1)) * log_p_old + np.log(a),
-                (1 / (T - 1)) * log_p_old + np.log(b)
-            ]))
-
-
-@numba.jit(nopython=True)
-def get_normalized_weights(log_weights):
-    return log_normalize(log_weights)
 
 
 @numba.jit(nopython=True)
@@ -231,7 +191,7 @@ def log_target_pdf_annealed(log_p_fn, a, b, params, T, x, z):
 
 
 @numba.jit(nopython=True)
-def propose(log_p_fn, a, b, params, x, z):
+def propose(log_p_fn, a, b, params, x, z, idx=-1):
     log_p = np.zeros(2)
 
     z[-1] = 0
@@ -242,15 +202,20 @@ def propose(log_p_fn, a, b, params, x, z):
 
     log_p[1] = log_target_pdf(log_p_fn, a, b, params, x, z)
 
-    log_p = log_normalize(log_p)
+    log_norm = log_sum_exp(log_p)
 
-    p = np.exp(log_p)
+    log_p = log_p - log_norm
 
-    return discrete_rvs(p)
+    if idx == -1:
+        p = np.exp(log_p)
+
+        idx = discrete_rvs(p)
+
+    return idx, log_p[idx], log_norm
 
 
 @numba.jit(nopython=True)
-def propose_annealed(log_p_fn, a, b, params, T, x, z):
+def propose_annealed(log_p_fn, a, b, params, T, x, z, idx=-1):
     log_p = np.zeros(2)
 
     z[-1] = 0
@@ -261,11 +226,16 @@ def propose_annealed(log_p_fn, a, b, params, T, x, z):
 
     log_p[1] = log_target_pdf_annealed(log_p_fn, a, b, params, T, x, z)
 
-    log_p = log_normalize(log_p)
+    log_norm = log_sum_exp(log_p)
 
-    p = np.exp(log_p)
+    log_p = log_p - log_norm
 
-    return discrete_rvs(p)
+    if idx == -1:
+        p = np.exp(log_p)
+
+        idx = discrete_rvs(p)
+
+    return idx, log_p[idx], log_norm
 
 
 @numba.jit(nopython=True)
@@ -301,7 +271,7 @@ def resample(log_W, particles, conditional=True, threshold=0.5):
 
                 idx += 1
 
-        log_W = np.ones(num_particles) * (1 / num_particles)
+        log_W = np.ones(num_particles) * np.log(1 / num_particles)
 
         particles = new_particles
 
