@@ -56,11 +56,17 @@ class GibbsFeatureAllocationMatrixKernel(object):
 def _update_feature_allocation_matrix(log_p_fn, rho_priors, theta, X, Z):
     """ Outer loop over rows for finite feature allocation model.
     """
+    K = Z.shape[1]
+
     N = Z.shape[0]
 
     rows = np.arange(N)
 
     np.random.shuffle(rows)
+
+    cols = np.arange(K)
+
+    np.random.shuffle(cols)
 
     for n in rows:
         m = np.sum(Z, axis=0)
@@ -71,7 +77,19 @@ def _update_feature_allocation_matrix(log_p_fn, rho_priors, theta, X, Z):
 
         b = (N - 1 - m) + rho_priors[1]
 
-        Z[n] = _update_row(log_p_fn, a, b, theta, X[n], Z[n])
+        z = Z[n]
+
+        z = _update_row(
+            log_p_fn,
+            a[cols],
+            b[cols],
+            theta[cols],
+            X[n],
+            z[cols]
+        )
+
+        for k in range(K):
+            Z[n, cols[k]] = z[k]
 
     return Z
 
@@ -80,11 +98,17 @@ def _update_feature_allocation_matrix(log_p_fn, rho_priors, theta, X, Z):
 def _update_feature_allocation_matrix_ibp(log_p_fn, theta, X, Z):
     """ Outer loop over rows for the Indian Buffet Process model.
     """
+    K = Z.shape[1]
+
     N = Z.shape[0]
 
     rows = np.arange(N)
 
     np.random.shuffle(rows)
+
+    cols = np.arange(K)
+
+    np.random.shuffle(cols)
 
     for n in rows:
         m = np.sum(Z, axis=0)
@@ -95,7 +119,19 @@ def _update_feature_allocation_matrix_ibp(log_p_fn, theta, X, Z):
 
         b = (N - 1 - m)
 
-        Z[n] = _update_row(log_p_fn, a, b, theta, X[n], Z[n])
+        z = Z[n]
+
+        z = _update_row(
+            log_p_fn,
+            a[cols],
+            b[cols],
+            theta[cols],
+            X[n],
+            z[cols]
+        )
+
+        for k in range(K):
+            Z[n, cols[k]] = z[k]
 
     return Z
 
@@ -106,24 +142,20 @@ def _update_row(log_p_fn, a, b, theta, x, z):
     """
     K = len(z)
 
-    cols = np.arange(K)
+    log_p = np.zeros(2)
 
-    np.random.shuffle(cols)
-
-    for k in cols:
+    for k in range(K):
         z[k] = 0
 
         f = get_linear_sum_params(z, theta)
 
-        log_p_0 = np.log(b[k]) + log_p_fn(x, f)
+        log_p[0] = np.log(b[k]) + log_p_fn(x, f)
 
         z[k] = 1
 
         f = get_linear_sum_params(z, theta)
 
-        log_p_1 = np.log(a[k]) + log_p_fn(x, f)
-
-        log_p = np.array([log_p_0, log_p_1])
+        log_p[1] = np.log(a[k]) + log_p_fn(x, f)
 
         log_p = log_normalize(log_p)
 
