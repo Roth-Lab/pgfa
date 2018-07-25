@@ -2,10 +2,10 @@ import numba
 import numpy as np
 import scipy.stats
 
-from pgfa.distributions import NormalDistribution, NormalGammaProductDistribution
+from pgfa.distributions import NormalDistribution
 from pgfa.distributions.base import Distribution
-from pgfa.inference.feature_matrix import GibbsFeatureAllocationMatrixKernel, RowGibbsFeatureAllocationMatrixKernel, \
-    ParticleGibbsFeatureAllocationMatrixKernel
+from pgfa.inference.feature_matrix import *
+
 from pgfa.models import FiniteFeatureAllocationModel
 from pgfa.utils import lof_sort
 
@@ -24,7 +24,11 @@ def main():
 
     print('Particle Gibbs')
 
-    run(X, Z, V, ParticleGibbsFeatureAllocationMatrixKernel())
+    run(X, Z, V, ParticleGibbsFeatureAllocationMatrixKernel(annealed=False))
+
+    print('Particle Gibbs Annealed')
+
+    run(X, Z, V, ParticleGibbsFeatureAllocationMatrixKernel(annealed=True))
 
     print('Row Gibbs')
 
@@ -58,7 +62,7 @@ def get_model(data, init_feat_mat, init_feat_params):
 
     feature_prior_params = np.array([0, 1])
 
-    feature_weight_params = np.array([0.01, 0.99])
+    feature_weight_params = np.array([0.1, 0.9])
 
     return FiniteFeatureAllocationModel(
         data,
@@ -75,9 +79,10 @@ def get_model(data, init_feat_mat, init_feat_params):
 def run(data, init_feat_mat, init_feat_params, updater):
     model = get_model(data, init_feat_mat, init_feat_params)
 
-    for i in range(200):
+    for i in range(1000):
         if i % 100 == 0:
             print(i, model.log_p)
+            print(np.sum(model.latent_values, axis=0))
 
         model.latent_values = updater.update(model)
 
