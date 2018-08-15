@@ -1,6 +1,7 @@
 import itertools
 import numpy as np
 import numba
+import scipy.special
 import scipy.stats
 
 from pgfa.math_utils import log_normalize
@@ -43,6 +44,47 @@ class NSFA(object):
 
         return Priors(gamma, S, U)
 
+    def log_pdf(self, data, params, priors):
+        gamma = params.gamma
+        F = params.F
+        S = params.S
+        U = params.U
+        V = params.V
+        W = params.W
+        X = data
+
+        log_p = 0
+
+        # Likelihood
+        for n in range(params.N):
+            log_p += scipy.stats.multivariate_normal.logpdf(X[:, n], np.dot(W, F[:, n]), S)
+
+        # Binary matrix prior
+        m = np.sum(U, axis=0)
+
+        a = priors.U[0] + m
+
+        b = priors.U[1] + (params.D - m)
+
+        for k in range(params.K):
+            log_p += scipy.special.betaln(a[k], b[k]) - scipy.special.betaln(priors.U[0], priors.U[1])
+
+        # Common factors prior
+        for k in range(params.K):
+            log_p += scipy.stats.multivariate_normal.logpdf(V[:, k], np.zeros(params.D), gamma * np.eye(params.D))
+
+        # Factor loadings prior
+        for n in range(params.N):
+            log_p += scipy.stats.multivariate_normal.logpdf(F[:, n], np.zeros(params.K), np.eye(params.K))
+
+        # Noise covariance
+        for d in range(params.D):
+            log_p += scipy.stats.gamma.logpdf(S[d, d], priors.S[0], scale=(1 / priors.S[1]))
+
+        log_p += scipy.stats.gamma.logpdf(gamma, priors.gamma[0], scale=(1 / priors.gamma[1]))
+
+        return log_p
+
     def log_predictive_pdf(self, data, params):
         S = params.S
         W = params.W
@@ -67,15 +109,13 @@ class NSFA(object):
         return params
 
     def _update_gamma(self, params, priors):
-        a = priors.gamma[0] + (np.sum(params.U) / 2)
+        a = priors.gamma[0] + 0.5 * np.sum(params.U)
 
-        b = priors.gamma[1] + np.sum(np.square(params.W))
+        b = priors.gamma[1] + 0.5 * np.sum(np.square(params.W))
 
         return 1 / np.random.gamma(a, 1 / b)
 
     def _update_F(self, data, params):
-        F = np.zeros(params.F.shape)
-
         S = params.S
         W = params.W
         X = data
@@ -86,10 +126,11 @@ class NSFA(object):
 
         temp = np.dot(sigma, np.dot(W.T, S_inv))
 
-        for n in range(params.N):
-            mu_n = np.dot(temp, X[:, n])
+        mu = np.dot(temp, X)
 
-            F[:, n] = np.random.multivariate_normal(mu_n, sigma)
+        chol = np.linalg.cholesky(sigma)
+
+        F = mu + np.dot(chol, np.random.normal(0, 1, size=(params.K, params.N)))
 
         return F
 
@@ -102,12 +143,12 @@ class NSFA(object):
 
         R = X - np.dot(W, F)
 
-        a = priors.S[0] + (params.N / 2)
+        a = priors.S[0] + 0.5 * params.N
 
-        b = priors.S[1] + np.sum(np.square(R), axis=1)
+        b = priors.S[1] + 0.5 * np.sum(np.square(R), axis=1)
 
         for d in range(params.D):
-            S[d, d] = 1 / (np.random.gamma(a, 1 / b[d]) + 1e-10)
+            S[d, d] = 1 / np.random.gamma(a, 1 / b[d])
 
         return S
 

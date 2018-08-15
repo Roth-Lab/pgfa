@@ -8,7 +8,7 @@ def main():
     num_iters = 1000
     D = 10
     K = 2
-    N_train = 100
+    N_train = 1000
     N_test = 100
 
     params_train = get_test_params(N_train, K, D, seed=0)
@@ -34,6 +34,8 @@ def main():
                 model.log_predictive_pdf(data_train, params),
                 model.log_predictive_pdf(data_test, params)
             )
+
+            print(model.log_pdf(data_train, params, priors))
 
             print(get_rmse(data_train, params_train), get_rmse(data_train, params), get_min_error(params, params_train))
 
@@ -72,6 +74,8 @@ def get_test_params(num_data_points, num_latent_dims, num_observed_dims, params=
         S = np.diagflat(np.ones(D) * 10)
 
         U = np.random.randint(0, 2, size=(D, K))
+
+        U = np.ones((D, K))
 
         V = np.random.multivariate_normal(np.zeros(K), np.eye(K), size=D)
 
