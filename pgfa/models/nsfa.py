@@ -95,14 +95,18 @@ class NSFA(object):
 
         return np.sum(scipy.stats.multivariate_normal.logpdf(data.T, mean, covariance))
 
-    def update_params(self, data, params, priors):
+    def update_params(self, data, params, priors, u_update='gibbs'):
         params.gamma = self._update_gamma(params, priors)
 
         params.F = self._update_F(data, params)
 
         params.S = self._update_S(data, params, priors)
 
-        params.U = self._update_U(data, params, priors)
+        if u_update == 'gibbs':
+            params.U = self._update_U(data, params, priors)
+
+        elif u_update == 'row_gibbs':
+            params.U = self._update_U_row(data, params, priors)
 
         params.V = self._update_V(data, params)
 
