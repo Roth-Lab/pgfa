@@ -162,23 +162,33 @@ class NSFA(object):
 
         log_p = np.zeros(2)
 
-        for d in range(params.D):
-            for k in range(params.K):
-                m = np.sum(U, axis=0)
+        prec = 1 / np.diag(S)
 
-                m[k] -= U[d, k]
+        rows = np.arange(params.D)
 
-                a = m + priors.U[0]
+        np.random.shuffle(rows)
 
-                b = (params.D - 1 - m) + priors.U[1]
+        cols = np.arange(params.K)
 
+        np.random.shuffle(cols)
+
+        for d in rows:
+            m = np.sum(U, axis=0)
+
+            m -= U[d]
+
+            a = m + priors.U[0]
+
+            b = (params.D - 1 - m) + priors.U[1]
+
+            for k in cols:
                 U[d, k] = 0
 
-                log_p[0] = np.log(b[k]) + log_p_fn(1 / S[d, d], U[d], V[d], X[d], F)
+                log_p[0] = np.log(b[k]) + log_p_fn(prec[d], U[d], V[d], X[d], F)
 
                 U[d, k] = 1
 
-                log_p[1] = np.log(a[k]) + log_p_fn(1 / S[d, d], U[d], V[d], X[d], F)
+                log_p[1] = np.log(a[k]) + log_p_fn(prec[d], U[d], V[d], X[d], F)
 
                 log_p = log_normalize(log_p)
 
@@ -186,28 +196,80 @@ class NSFA(object):
 
         return U
 
+    def _update_U_row(self, data, params, priors):
+        U = params.U.copy()
+
+        F = params.F
+        S = params.S
+        V = params.V
+        X = data
+
+        Us = list(map(np.array, itertools.product([0, 1], repeat=params.K)))
+
+        Us = np.array(Us, dtype=np.int)
+
+        log_p = np.zeros(len(Us))
+
+        for d in range(params.D):
+            m = np.sum(U, axis=0)
+
+            m -= U[d]
+
+            a = m + priors.U[0]
+
+            b = (params.D - 1 - m) + priors.U[1]
+
+            for i, u in enumerate(Us):
+                log_p[i] = np.sum(u * np.log(a)) + np.sum((1 - u) * np.log(b)) + \
+                    log_p_fn(1 / S[d, d], u, V[d], X[d], F)
+
+            log_p = log_normalize(log_p)
+
+            p = np.exp(log_p)
+
+            idx = discrete_rvs(p)
+
+            U[d] = Us[idx]
+
+        return U
+
     def _update_V(self, data, params):
-        V = params.V.copy()
+        V = np.zeros(params.V.shape)
 
         gamma = params.gamma
         F = params.F
         S = params.S
         U = params.U
+        W = params.W
         X = data
 
-        F_square = np.square(F).sum(axis=1)
+        FF = np.square(F).sum(axis=1)
+
+        R = X - np.dot(W, F)
 
         for d in range(params.D):
             for k in range(params.K):
-                sigma = 1 / ((F_square[k] / S[d, d]) + (1 / gamma))
+                if U[d, k] == 1:
+                    rk = R[d] + W[d, k] * F[k]
 
-                R = X - np.dot((U * V), F)
+                else:
+                    rk = R[d]
 
-                X_star = R[d] + (U[d, k] * V[d, k] * F[k])
+                prec = (FF[k] / S[d, d]) + (1 / gamma)
 
-                mu = (sigma / S[d, d]) * np.dot(F[k], X_star)
+                sigma = 1 / prec
+
+                mu = (sigma / S[d, d]) * np.dot(F[k], rk)
 
                 V[d, k] = np.random.normal(mu, sigma)
+
+                if U[d, k] == 1:
+                    W[d, k] = V[d, k]
+
+                else:
+                    W[d, k] = 0
+
+                R[d] = rk - W[d, k] * F[k]
 
         return V
 
@@ -255,7 +317,7 @@ class Priors(object):
 
 @numba.njit
 def log_p_fn(precision, u, v, x, F):
-    N = F.shape[0]
+    N = F.shape[1]
 
     log_p = 0
 
