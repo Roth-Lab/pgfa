@@ -82,7 +82,7 @@ def update_feature_matrix_by_particle_gibbs_collapsed(
     return Z
 
 
-@numba.jit(nopython=True, parallel=True)
+@numba.jit(nopython=True, parallel=False)
 def update_feature_matrix_by_particle_gibbs_collapsed_single_row(
         log_p_fn,
         a,
