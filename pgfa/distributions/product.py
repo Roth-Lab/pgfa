@@ -89,14 +89,17 @@ class ProductDistribution(Distribution):
     def _get_standard_params(self, params):
         """ Return Kx1xD array of parameters.
         """
+        D = self.base_dist.params_dim
+
+        K = self.dim
+
         params = np.atleast_2d(params)
 
+        if params.shape == (1, D):
+            params = np.tile(params, (K, 1))
+
         if params.ndim == 2:
-            D = self.base_dist.params_dim
-
-            num_components = self._get_num_components(params)
-
-            params = params.reshape((num_components, 1, D))
+            params = params.reshape((K, 1, D))
 
         return params
 
