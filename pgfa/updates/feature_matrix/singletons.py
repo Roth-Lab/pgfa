@@ -1,0 +1,52 @@
+import numpy as np
+
+from pgfa.math_utils import do_metropolis_hastings_accept_reject
+
+
+def do_mh_singletons_update(row, density, proposal, alpha, V, X, Z):
+    """ Update the singletons using a Metropolis Hastings proposal from the prior.
+    """
+
+    D = X.shape[1]
+    N = X.shape[0]
+
+    m = np.sum(Z, axis=0)
+
+    m -= Z[row]
+
+    non_singletons_idxs = np.atleast_1d(np.squeeze(np.where(m > 0)))
+
+    K_non_singleton = len(non_singletons_idxs)
+
+    K_new = K_non_singleton + np.random.poisson(alpha / N)
+
+    z_A = Z[row, non_singletons_idxs]
+
+    # Current state
+    log_p_old = density.log_p(X[row], Z[row], V)
+
+    # New state
+    z_new = np.ones(K_new)
+
+    z_new[:K_non_singleton] = z_A
+
+    V_new = np.zeros((K_new, D))
+
+    V_new[:K_non_singleton] = V[non_singletons_idxs]
+
+    V_new[K_non_singleton:] = proposal.rvs(size=(K_new - K_non_singleton))
+
+    log_p_new = density.log_p(X[row], z_new, V_new)
+
+    if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, 0, 0):
+        V = V_new
+
+        Z_new = np.zeros((N, K_new))
+
+        Z_new[:, :K_non_singleton] = Z[:, non_singletons_idxs]
+
+        Z_new[row, K_non_singleton:] = 1
+
+        Z = Z_new
+
+    return V, Z
