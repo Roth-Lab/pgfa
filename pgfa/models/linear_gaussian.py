@@ -1,9 +1,10 @@
-import itertools
+import numba
 import numpy as np
 import scipy.stats
 
-from pgfa.math_utils import log_normalize
-from pgfa.stats import discrete_rvs, ffa_rvs, ibp_rvs
+from pgfa.stats import ffa_rvs, ibp_rvs
+from pgfa.updates import do_gibbs_update, do_row_gibbs_update, do_particle_gibbs_update, do_collaped_gibbs_update, \
+    do_collapsed_row_gibbs_update, get_cols, get_rows
 
 
 def get_params(D, N, K=None):
@@ -63,6 +64,49 @@ class LinearGaussianPriors(object):
         self.tau_x = tau_x
 
 
+@numba.jitclass([
+    ('t_x', numba.float64)
+])
+class LinearGaussianDensity(object):
+    def __init__(self, t_x):
+        self.t_x = t_x
+
+    def log_p(self, x, z, V):
+        t_x = self.t_x
+        D = V.shape[1]
+        log_p = 0.5 * D * (np.log(t_x) - np.log(2 * np.pi))
+        for d in range(D):
+            m = np.sum(V[:, d] * z)
+            log_p -= 0.5 * t_x * (x[d] - m)**2
+        return log_p
+
+
+class LinearGaussianMarginalDensity(object):
+    def __init__(self, t_a, t_x):
+        self.t_a = t_a
+        self.t_x = t_x
+
+    def log_p(self, X, Z):
+        t_a = self.t_a
+        t_x = self.t_x
+
+        D = X.shape[1]
+        K = Z.shape[1]
+        N = X.shape[0]
+
+        M = np.linalg.inv(Z.T @ Z + (t_a / t_x) * np.eye(K))
+        XZ = X.T @ Z
+        XX = X.T @ X
+
+        log_p = 0
+        log_p += 0.5 * (N - K) * D * np.log(t_x)
+        log_p -= 0.5 * N * D * np.log(2 * np.pi)
+        log_p -= 0.5 * D * np.log(np.linalg.det(M))
+        log_p -= 0.5 * t_x * np.trace(XX - XZ @ M @ XZ.T)
+
+        return log_p
+
+
 class LinearGaussianModel(object):
     def __init__(self, data, K=None, params=None, priors=None):
         self.data = data
@@ -80,72 +124,43 @@ class LinearGaussianModel(object):
         self.priors = priors
 
     @property
+    def feature_priors(self):
+        K = self.params.Z.shape[1]
+
+        if self.ibp:
+            a_0 = 0
+            b_0 = 0
+
+        else:
+            a_0 = self.params.alpha / K
+            b_0 = 1
+
+        return a_0, b_0
+
+    @property
     def ibp(self):
         return self.K is None
 
     def get_log_p_X(self, A, X, Z):
-        t_x = self.params.tau_x
-
         X = np.atleast_2d(X)
         Z = np.atleast_2d(Z)
 
-        D = X.shape[1]
-        N = X.shape[0]
+        density = LinearGaussianDensity(self.params.tau_x)
 
-        Y = X - np.dot(Z, A)
+        log_p = 0
 
-        return sum([
-            0.5 * N * D * np.log(t_x),
-            -0.5 * N * D * np.log(2 * np.pi),
-            -0.5 * t_x * np.trace(np.dot(Y.T, Y))
-        ])
+        for x, z in zip(X, Z):
+            log_p += density.log_p(x, z, A)
+
+        return log_p
 
     def get_log_p_X_collapsed(self, X, Z):
-        t_a = self.params.tau_a
-        t_x = self.params.tau_x
+        X = np.atleast_2d(X)
+        Z = np.atleast_2d(Z)
 
-        D = X.shape[1]
-        K = Z.shape[1]
-        N = X.shape[0]
+        density = LinearGaussianMarginalDensity(self.params.tau_a, self.params.tau_x)
 
-        M = self._get_M(t_a, t_x, Z)
-
-        XZ = np.dot(X.T, Z)
-
-        XX = np.dot(X.T, X)
-
-        return sum([
-            0.5 * (N - K) * D * np.log(t_x),
-            0.5 * K * D * np.log(t_a),
-            -0.5 * N * D * np.log(2 * np.pi),
-            -0.5 * D * np.log(np.linalg.det(M)),
-            -0.5 * t_x * np.trace(XX - np.dot(XZ, np.dot(M, XZ.T)))
-        ])
-
-    def _get_cols(self, m):
-        K = len(m)
-
-        if self.ibp:
-            cols = np.atleast_1d(np.squeeze(np.where(m > 0)))
-
-        else:
-            cols = np.arange(K)
-
-        np.random.shuffle(cols)
-
-        return cols
-
-    def _get_rows(self):
-        rows = np.arange(self.data.shape[0])
-
-        np.random.shuffle(rows)
-
-        return rows
-
-    def _get_M(self, t_a, t_x, Z):
-        K = Z.shape[1]
-
-        return np.linalg.inv(np.dot(Z.T, Z) + (t_a / t_x) * np.eye(K))
+        return density.log_p(X, Z)
 
     def _update_A(self):
         t_a = self.params.tau_a
@@ -154,11 +169,12 @@ class LinearGaussianModel(object):
         X = self.data
 
         D = X.shape[1]
+        K = Z.shape[1]
 
-        M = self._get_M(t_a, t_x, Z)
+        M = np.linalg.inv(Z.T @ Z + (t_a / t_x) * np.eye(K))
 
         self.params.A = scipy.stats.matrix_normal.rvs(
-            mean=np.dot(M, np.dot(Z.T, X)),
+            mean=M @ Z.T @ X,
             rowcov=(1 / t_x) * M,
             colcov=np.eye(D)
         )
@@ -171,7 +187,7 @@ class LinearGaussianModel(object):
 
         a = self.priors.tau_a[0] + 0.5 * K * D
 
-        b = self.priors.tau_a[1] + 0.5 * np.trace(np.dot(A.T, A))
+        b = self.priors.tau_a[1] + 0.5 * np.trace(A.T @ A)
 
         self.params.tau_a = np.random.gamma(a, 1 / b)
 
@@ -185,20 +201,16 @@ class LinearGaussianModel(object):
 
         a = self.priors.tau_x[0] + 0.5 * N * D
 
-        Y = X - np.dot(Z, A)
+        Y = X - Z @ A
 
-        b = self.priors.tau_x[1] + 0.5 * np.trace(np.dot(Y.T, Y))
+        b = self.priors.tau_x[1] + 0.5 * np.trace(Y.T @ Y)
 
         self.params.tau_x = np.random.gamma(a, 1 / b)
 
 
 class LinearGaussianUncollapsedModel(LinearGaussianModel):
-    def update(self, kernel='gibbs'):
-        if kernel == 'gibbs':
-            self._update_Z()
-
-        elif kernel == 'row-gibbs':
-            self._update_Z_row()
+    def update(self, update_type='gibbs'):
+        self._update_Z(update_type=update_type)
 
         self._update_A()
 
@@ -206,204 +218,40 @@ class LinearGaussianUncollapsedModel(LinearGaussianModel):
 
         self._update_tau_x()
 
-    def _update_Z(self):
-        alpha = self.params.alpha
+    def _update_Z(self, update_type='gibbs'):
+        V = self.params.A
+        Z = self.params.Z
         X = self.data
 
-        K = self.params.Z.shape[1]
         N = self.params.Z.shape[0]
 
-        if self.ibp:
-            a_0 = 0
-            b_0 = 0
+        a_0, b_0 = self.feature_priors
 
-        else:
-            a_0 = alpha / K
-            b_0 = 1
+        density = LinearGaussianDensity(self.params.tau_x)
 
-        log_p = np.zeros(2)
+        for n in get_rows(N):
+            x = X[n]
 
-        rows = self._get_rows()
-
-        for n in rows:
-            Z = self.params.Z
+            z = Z[n]
 
             m = np.sum(Z, axis=0)
 
-            m -= Z[n]
+            m -= z
 
             a = a_0 + m
 
             b = b_0 + (N - m)
 
-            cols = self._get_cols(m)
+            cols = get_cols(m, include_singletons=(not self.ibp))
 
-            for k in cols:
-                Z[n, k] = 0
+            if update_type == 'gibbs':
+                Z[n] = do_gibbs_update(density, a, b, cols, x, z, V)
 
-                log_p[0] = np.log(b[k]) + self.get_log_p_X(self.params.A, X[n], Z[n])
+            elif update_type == 'particle-gibbs':
+                Z[n] = do_particle_gibbs_update(density, a, b, cols, x, z, V)
 
-                Z[n, k] = 1
-
-                log_p[1] = np.log(a[k]) + self.get_log_p_X(self.params.A, X[n], Z[n])
-
-                log_p = log_normalize(log_p)
-
-                Z[n, k] = discrete_rvs(np.exp(log_p))
-
-            self.params.Z = Z
-
-            if self.ibp:
-                self._update_Z_singletons(n)
-
-    def _update_Z_particle_gibbs(self):
-        alpha = self.params.alpha
-        X = self.data
-
-        K = self.params.Z.shape[1]
-        N = self.params.Z.shape[0]
-
-        if self.ibp:
-            a_0 = 0
-            b_0 = 0
-
-        else:
-            a_0 = alpha / K
-            b_0 = 1
-
-        rows = self._get_rows()
-
-        for n in rows:
-            m = np.sum(Z, axis=0)
-
-            m -= Z[n]
-
-            a = a_0 + m
-
-            b = b_0 + (N - m)
-
-            cols = _get_cols(m, ibp=ibp)
-
-            K = Z.shape[1]
-
-            K_p = len(cols)
-
-            K_m = K - K_p
-
-            Z_new = np.zeros((N, K))
-
-            Z_new[:, K_m:] = Z[:, cols]
-            Z_new[n, :K_m] = 1
-
-            log_norm = np.zeros(num_particles)
-
-            log_p = np.zeros(num_particles)
-
-            log_w = np.zeros((num_particles, K_p))
-
-            log_W = np.zeros(num_particles)
-
-            particles = np.zeros((num_particles, K_p))
-
-            particles[0] = Z[n, cols]
-
-            for k in range(K_p):
-                log_W = log_normalize(log_W)
-
-                log_p_old = log_p
-
-                if k > 0:
-                    log_W, particles = resample(log_W, particles, conditional=True, threshold=resample_threshold)
-
-                for i in range(num_particles):
-                    if i == 0:
-                        idx = particles[i, k]
-                    else:
-                        idx = -1
-
-                    Z_new[n, K_m:(K_m + k)] = particles[i, :k]
-
-                    particles[i, k], log_p[i], log_norm[i] = propose(
-                        k, n, a[cols[k]], b[cols[k]], s_a, s_x, X, Z_new[:, :(K_m + k)], idx=idx
-                    )
-
-                    log_w[i, k] = log_norm[i] - log_p_old[i]
-
-                    log_W[i] = log_W[i] + log_w[i, k]
-
-            log_W = log_normalize(log_W)
-
-            W = np.exp(log_W)
-
-            idx = discrete_rvs(W)
-
-            for l, k in enumerate(cols):
-                Z[n, k] = particles[idx, l]
-
-            if ibp:
-                Z = sample_Z_singletons(n, alpha, s_a, s_x, X, Z)
-
-            Z = _remove_empty_rows(Z)
-
-    def _update_Z_row(self):
-        alpha = self.params.alpha
-        X = self.data
-
-        K = self.params.Z.shape[1]
-        N = self.params.Z.shape[0]
-
-        if self.ibp:
-            a_0 = 0
-            b_0 = 0
-
-        else:
-            a_0 = alpha / K
-            b_0 = 1
-
-        rows = self._get_rows()
-
-        for n in rows:
-            Z = self.params.Z
-
-            m = np.sum(Z, axis=0)
-
-            m -= Z[n]
-
-            a = a_0 + m
-
-            b = b_0 + (N - m)
-
-            cols = self._get_cols(m)
-
-            a = a[cols]
-
-            b = b[cols]
-
-            K = Z.shape[1]
-
-            K_non_singleton = len(cols)
-
-            Zs = list(map(np.array, itertools.product([0, 1], repeat=K_non_singleton)))
-
-            Zs = np.array(Zs, dtype=np.int)
-
-            log_p = np.zeros(len(Zs))
-
-            for idx, z_new in enumerate(Zs):
-                z = np.ones(K)
-
-                z[cols] = z_new
-
-                log_p[idx] = np.sum(z_new * np.log(a)) + np.sum((1 - z_new) * np.log(b)) + \
-                    self.get_log_p_X(self.params.A, X[n], z)
-
-            log_p = log_normalize(log_p)
-
-            idx = discrete_rvs(np.exp(log_p))
-
-            Z[n, cols] = Zs[idx]
-
-            self.params.Z = Z
+            elif update_type == 'row-gibbs':
+                Z[n] = do_row_gibbs_update(density, a, b, cols, x, z, V)
 
             if self.ibp:
                 self._update_Z_singletons(n)
@@ -419,6 +267,7 @@ class LinearGaussianUncollapsedModel(LinearGaussianModel):
         N = Z.shape[0]
 
         m = np.sum(Z, axis=0)
+
         m -= Z[row]
 
         non_singletons_idxs = np.atleast_1d(np.squeeze(np.where(m > 0)))
@@ -463,12 +312,8 @@ class LinearGaussianUncollapsedModel(LinearGaussianModel):
 
 
 class LinearGaussianCollapsedModel(LinearGaussianModel):
-    def update(self, kernel='gibbs'):
-        if kernel == 'gibbs':
-            self._update_Z()
-
-        elif kernel == 'row-gibbs':
-            self._update_Z_row()
+    def update(self, update_type='gibbs'):
+        self._update_Z(update_type=update_type)
 
         self._update_A()
 
@@ -476,28 +321,17 @@ class LinearGaussianCollapsedModel(LinearGaussianModel):
 
         self._update_tau_x()
 
-    def _update_Z(self):
-        alpha = self.params.alpha
+    def _update_Z(self, update_type='gibbs'):
+        Z = self.params.Z
         X = self.data
 
-        K = self.params.Z.shape[1]
-        N = self.params.Z.shape[0]
+        N = Z.shape[0]
 
-        if self.ibp:
-            a_0 = 0
-            b_0 = 0
+        a_0, b_0 = self.feature_priors
 
-        else:
-            a_0 = alpha / K
-            b_0 = 1
+        density = LinearGaussianMarginalDensity(self.params.tau_a, self.params.tau_x)
 
-        log_p = np.zeros(2)
-
-        rows = self._get_rows()
-
-        for n in rows:
-            Z = self.params.Z
-
+        for n in get_rows(N):
             m = np.sum(Z, axis=0)
 
             m -= Z[n]
@@ -506,88 +340,16 @@ class LinearGaussianCollapsedModel(LinearGaussianModel):
 
             b = b_0 + (N - m)
 
-            cols = self._get_cols(m)
+            cols = get_cols(m, include_singletons=(not self.ibp))
 
-            for k in cols:
-                Z[n, k] = 0
+            if update_type == 'gibbs':
+                Z[n] = do_collaped_gibbs_update(density, a, b, cols, n, X, Z)
 
-                log_p[0] = np.log(b[k]) + self.get_log_p_X_collapsed(X, Z)
-
-                Z[n, k] = 1
-
-                log_p[1] = np.log(a[k]) + self.get_log_p_X_collapsed(X, Z)
-
-                log_p = log_normalize(log_p)
-
-                Z[n, k] = discrete_rvs(np.exp(log_p))
-
-            self.params.Z = Z
+            elif update_type == 'row-gibbs':
+                Z[n] = do_collapsed_row_gibbs_update(density, a, b, cols, n, X, Z)
 
             if self.ibp:
                 self._update_Z_singletons(n)
-
-            self._remove_empty_rows()
-
-    def _update_Z_row(self):
-        alpha = self.params.alpha
-        X = self.data
-
-        K = self.params.Z.shape[1]
-        N = self.params.Z.shape[0]
-
-        if self.ibp:
-            a_0 = 0
-            b_0 = 0
-
-        else:
-            a_0 = alpha / K
-            b_0 = 1
-
-        rows = self._get_rows()
-
-        for n in rows:
-            Z = self.params.Z
-
-            m = np.sum(Z, axis=0)
-
-            m -= Z[n]
-
-            a = a_0 + m
-
-            b = b_0 + (N - m)
-
-            cols = self._get_cols(m)
-
-            a = a[cols]
-
-            b = b[cols]
-
-            K_non_singleton = len(cols)
-
-            Zs = list(map(np.array, itertools.product([0, 1], repeat=K_non_singleton)))
-
-            Zs = np.array(Zs, dtype=np.int)
-
-            log_p = np.zeros(len(Zs))
-
-            for idx, z in enumerate(Zs):
-                Z[n, cols] = z
-
-                log_p[idx] = np.sum(z * np.log(a)) + np.sum((1 - z) * np.log(b)) + \
-                    self.get_log_p_X_collapsed(X, Z)
-
-            log_p = log_normalize(log_p)
-
-            idx = discrete_rvs(np.exp(log_p))
-
-            Z[n, cols] = Zs[idx]
-
-            self.params.Z = Z
-
-            if self.ibp:
-                self._update_Z_singletons(n)
-
-            self._remove_empty_rows()
 
     def _update_Z_singletons(self, row):
         alpha = self.params.alpha
@@ -598,27 +360,22 @@ class LinearGaussianCollapsedModel(LinearGaussianModel):
         N = Z.shape[0]
 
         m = np.sum(Z, axis=0)
+
         m -= Z[row]
 
         cols = np.atleast_1d(np.squeeze(np.where(m > 0)))
 
         K_non_singleton = len(cols)
 
-        k_old = K - K_non_singleton
+        K_new = K + np.random.poisson(alpha / N)
 
-        k_new = np.random.poisson(alpha / N)
+        Z_new = np.zeros((N, K_new), dtype=np.int64)
 
-        Z = Z[:, cols]
-
-        Z_old = np.column_stack([Z, np.zeros((N, k_old))])
-
-        Z_old[row, K_non_singleton:] = 1
-
-        Z_new = np.column_stack([Z, np.zeros((N, k_new))])
+        Z_new[:, :K_non_singleton] = Z[:, cols]
 
         Z_new[row, K_non_singleton:] = 1
 
-        log_p_old = self.get_log_p_X_collapsed(X, Z_old)
+        log_p_old = self.get_log_p_X_collapsed(X, Z)
 
         log_p_new = self.get_log_p_X_collapsed(X, Z_new)
 
@@ -627,16 +384,4 @@ class LinearGaussianCollapsedModel(LinearGaussianModel):
         u = np.random.rand()
 
         if diff > np.log(u):
-            Z = Z_new
-
-        else:
-            Z = Z_old
-
-        self.params.Z = Z
-
-    def _remove_empty_rows(self):
-        m = np.sum(self.params.Z, axis=0)
-
-        cols = np.atleast_1d(np.squeeze(np.where(m > 0)))
-
-        self.params.Z = self.params.Z[:, cols]
+            self.params.Z = Z_new
