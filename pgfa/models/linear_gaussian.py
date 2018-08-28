@@ -209,8 +209,8 @@ class LinearGaussianModel(object):
 
 
 class LinearGaussianUncollapsedModel(LinearGaussianModel):
-    def update(self, update_type='gibbs'):
-        self._update_Z(update_type=update_type)
+    def update(self, num_particles=10, resample_threshold=0.5, update_type='g'):
+        self._update_Z(num_particles=num_particles, resample_threshold=resample_threshold, update_type=update_type)
 
         self._update_A()
 
@@ -218,7 +218,7 @@ class LinearGaussianUncollapsedModel(LinearGaussianModel):
 
         self._update_tau_x()
 
-    def _update_Z(self, update_type='gibbs'):
+    def _update_Z(self, num_particles=10, resample_threshold=0.5, update_type='g'):
         V = self.params.A
         Z = self.params.Z
         X = self.data
@@ -244,13 +244,22 @@ class LinearGaussianUncollapsedModel(LinearGaussianModel):
 
             cols = get_cols(m, include_singletons=(not self.ibp))
 
-            if update_type == 'gibbs':
+            if update_type == 'g':
                 Z[n] = do_gibbs_update(density, a, b, cols, x, z, V)
 
-            elif update_type == 'particle-gibbs':
-                Z[n] = do_particle_gibbs_update(density, a, b, cols, x, z, V)
+            elif update_type == 'pg':
+                Z[n] = do_particle_gibbs_update(
+                    density, a, b, cols, x, z, V,
+                    annealed=False, num_particles=num_particles, resample_threshold=resample_threshold
+                )
 
-            elif update_type == 'row-gibbs':
+            elif update_type == 'pga':
+                Z[n] = do_particle_gibbs_update(
+                    density, a, b, cols, x, z, V,
+                    annealed=True, num_particles=num_particles, resample_threshold=resample_threshold
+                )
+
+            elif update_type == 'rg':
                 Z[n] = do_row_gibbs_update(density, a, b, cols, x, z, V)
 
             if self.ibp:
