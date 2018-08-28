@@ -144,6 +144,9 @@ def update_A(data, params):
     D = X.shape[1]
     K = Z.shape[1]
 
+    if K == 0:
+        return
+
     M = np.linalg.inv(Z.T @ Z + (t_a / t_x) * np.eye(K))
 
     params.A = scipy.stats.matrix_normal.rvs(
