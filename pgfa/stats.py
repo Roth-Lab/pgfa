@@ -5,24 +5,12 @@ import scipy.stats
 from pgfa.math_utils import log_beta, log_factorial
 
 
-@numba.jit(nopython=True)
+@numba.njit
 def discrete_rvs(p):
-    """ Simulate a Bernoulli random variable.
-
-    Parameters
-    ----------
-    p: ndarray
-        Array of class probabilites. Must sum to 1.
-
-    Returns:
-    X: int
-        Discrete value selected.
-    """
-    p = p + 1e-10
-
     p = p / np.sum(p)
-
-    return np.random.multinomial(1, p).argmax()
+    P = np.cumsum(p)
+    u = np.random.random_sample()
+    return np.digitize(np.array(u), P).max()
 
 
 def gamma_rvs(shape, scale, size=None):
@@ -66,7 +54,7 @@ def ibp_rvs(alpha, N):
         m = np.sum(Z, axis=0)
 
         for k in range(K):
-            p = np.array([N - m[k], m[k]])
+            p = np.array([n - m[k], m[k]])
 
             p = p / p.sum()
 
