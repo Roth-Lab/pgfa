@@ -1,111 +1,63 @@
 import itertools
 import numpy as np
 import numba
-import scipy.special
 import scipy.stats
 
-from pgfa.math_utils import log_factorial, log_normalize
-from pgfa.stats import discrete_rvs
+from pgfa.math_utils import ffa_rvs, ibp_rvs, log_ffa_pdf, log_ibp_pdf
+
+import pgfa.updates.feature_matrix
 
 
-class NSFA(object):
-    def get_init_params(self, data, num_latent_dim, seed=None):
-        if seed is not None:
-            np.random.seed(seed)
+class NonparametricSparaseFactorAnalysisModel(object):
+    def __init__(self, data, K=None, params=None, priors=None):
+        self.data = data
 
-        D = data.shape[0]
-        K = num_latent_dim
-        N = data.shape[1]
+        self.ibp = (K is None)
 
-        # IBP params
-        alpha = 1
+        if params is None:
+            params = get_params_from_data(data, K=K)
 
-        # Common factor variance
-        gamma = 1
+        self.params = params
 
-        # Factor loadings
-        F = np.random.normal(0, 1, size=(K, N))
+        if priors is None:
+            priors = Priors()
 
-        # Covariance of observation
-        S = np.eye(D)
+        self.priors = priors
 
-        # Sparse matrix for common factors
-        U = np.random.randint(0, 2, size=(D, K))
+    def log_p(self):
+        params = self.params
+        priors = self.priors
 
-        # Common factors
-        V = np.random.multivariate_normal(np.zeros(K), gamma * np.eye(K), size=D)
-
-        return Parameters(alpha, gamma, F, S, U, V)
-
-    def get_priors(self, ibp=False):
-        gamma = np.array([1, 1])
-
-        if ibp:
-            alpha = np.array([1, 1])
-
-            U = np.array([0, 0])
-
-        else:
-            alpha = None
-
-            U = np.array([1, 1])
-
-        S = np.array([1, 1])
-
-        return Priors(alpha, gamma, S, U)
-
-    def log_pdf(self, data, params, priors):
         alpha = params.alpha
         gamma = params.gamma
         F = params.F
         S = params.S
-        U = params.U
+        Z = params.Z
         V = params.V
         W = params.W
-        X = data
+        X = self.data
 
         log_p = 0
 
         # Likelihood
         for n in range(params.N):
-            log_p += scipy.stats.multivariate_normal.logpdf(X[:, n], np.dot(W, F[:, n]), S)
+            log_p += scipy.stats.multivariate_normal.logpdf(X[:, n], np.dot(W, F[:, n]), 1 / S)
 
         # Binary matrix prior
-        m = np.sum(U, axis=0)
-
-        a = priors.U[0] + m
-
-        b = priors.U[1] + (params.D - m)
-
         if priors.alpha is None:
-            for k in range(params.K):
-                log_p += scipy.special.betaln(a[k], b[k]) - scipy.special.betaln(priors.U[0], priors.U[1])
+            log_p += log_ffa_pdf(priors.Z[0], priors.Z[1], Z)
 
         else:
-            H = np.sum(1 / np.arange(1, params.D + 1))
+            log_p += log_ibp_pdf(alpha, Z)
 
-            log_p += params.K * np.log(alpha) - H * alpha
-
-            histories, history_counts = np.unique(params.U, axis=1, return_counts=True)
-
-            m = histories.sum(axis=0)
-
-            num_histories = histories.shape[1]
-
-            for h in range(num_histories):
-                K_h = history_counts[h]
-
-                log_p -= log_factorial(K_h)
-
-                log_p += K_h * log_factorial(m[h] - 1) + K_h * log_factorial(params.D - m[h])
-
-                log_p -= history_counts[h] * log_factorial(params.D)
-
+            # Prior on alpha
             log_p += scipy.stats.gamma.logpdf(alpha, priors.alpha[0], scale=(1 / priors.alpha[1]))
 
         # Common factors prior
         for k in range(params.K):
-            log_p += scipy.stats.multivariate_normal.logpdf(V[:, k], np.zeros(params.D), gamma * np.eye(params.D))
+            log_p += scipy.stats.multivariate_normal.logpdf(
+                V[:, k], np.zeros(params.D), (1 / gamma) * np.eye(params.D)
+            )
 
         # Factor loadings prior
         for n in range(params.N):
@@ -125,7 +77,7 @@ class NSFA(object):
 
         mean = np.zeros(params.D)
 
-        covariance = S + np.dot(W, W.T)
+        covariance = np.linalg.inv(S) + W @ W.T
 
         try:
             log_p = np.sum(scipy.stats.multivariate_normal.logpdf(data.T, mean, covariance))
@@ -136,340 +88,191 @@ class NSFA(object):
 
         return log_p
 
-    def update_params(self, data, params, priors, u_update='gibbs'):
-        params = params.copy()
+    def update(self, num_particles=10, resample_threshold=0.5, update_type='g'):
+        update_Z(
+            self.data,
+            self.params,
+            ibp=self.ibp,
+            num_particles=num_particles,
+            resample_threshold=resample_threshold,
+            update_type=update_type
+        )
 
-        if u_update == 'gibbs':
-            self._update_U(data, params, priors)
+        update_V(self.data, self.params)
 
-        elif u_update == 'row_gibbs':
-            self._update_U_row(data, params, priors)
+        update_F(self.data, self.params)
 
-        self._update_V(data, params)
+        update_gamma(self.data, self.params)
 
-        if priors.alpha is not None:
-            self._update_alpha(params, priors)
+        update_S(self.data, self.params, self.priors)
 
-        self._update_gamma(params, priors)
+        update_alpha(self.params, self.priors)
 
-        self._update_F(data, params)
 
-        self._update_S(data, params, priors)
+#=========================================================================
+# Updates
+#=========================================================================
+def update_alpha(params, priors):
+    a = params.K + priors.alpha[0]
 
-        return params
+    b = np.sum(1 / np.arange(1, params.D + 1)) + priors.alpha[0]
 
-    def _update_alpha(self, params, priors):
-        a = params.K + priors.alpha[0]
+    params.alpha = np.random.gamma(a, 1 / b)
 
-        b = np.sum(1 / np.arange(1, params.D + 1)) + priors.alpha[0]
 
-        params.alpha = np.random.gamma(a, 1 / b)
+def update_gamma(params, priors):
+    a = priors.gamma[0] + 0.5 * np.sum(params.Z)
 
-    def _update_gamma(self, params, priors):
-        a = priors.gamma[0] + 0.5 * np.sum(params.U)
+    b = priors.gamma[1] + 0.5 * np.sum(np.square(params.W))
 
-        b = priors.gamma[1] + 0.5 * np.sum(np.square(params.W))
+    params.gamma = np.random.gamma(a, 1 / b)
 
-        params.gamma = 1 / np.random.gamma(a, 1 / b)
 
-    def _update_F(self, data, params):
-        S = params.S
-        W = params.W
-        X = data
+def update_F(data, params):
+    S = params.S
+    W = params.W
+    X = data
 
-        S_inv = np.linalg.inv(S)
+    A = np.eye(params.K) + W.T @ S @ W
 
-        sigma = np.linalg.inv(np.eye(params.K) + np.dot(W.T, np.dot(S_inv, W)))
+    b = np.linalg.inv(A) @ W.T @ S @ X
 
-        temp = np.dot(sigma, np.dot(W.T, S_inv))
+    cov = np.linalg.inv(A)
 
-        mu = np.dot(temp, X)
+    cov_chol = np.linalg.cholesky(cov)
 
-        chol = np.linalg.cholesky(sigma)
+    eps = np.random.normal(0, 1, size=(params.K, params.N))
 
-        params.F = mu + np.dot(chol, np.random.normal(0, 1, size=(params.K, params.N)))
+    params.F = b + cov_chol @ eps
 
-    def _update_S(self, data, params, priors):
-        S = np.zeros((params.D, params.D))
 
-        F = params.F
-        W = params.W
-        X = data
+def update_S(data, params, priors):
+    S = np.zeros((params.D, params.D))
 
-        R = X - np.dot(W, F)
+    F = params.F
+    W = params.W
+    X = data
 
-        a = priors.S[0] + 0.5 * params.N
+    R = X - np.dot(W, F)
 
-        b = priors.S[1] + 0.5 * np.sum(np.square(R), axis=1)
+    a = priors.S[0] + 0.5 * params.N
 
-        for d in range(params.D):
-            S[d, d] = 1 / np.random.gamma(a, 1 / b[d])
+    b = priors.S[1] + 0.5 * np.sum(np.square(R), axis=1)
 
-        params.S = S
+    for d in range(params.D):
+        S[d, d] = np.random.gamma(a, 1 / b[d])
 
-    def _update_U(self, data, params, priors):
-        F = params.F
-        S = params.S
-        U = params.U
-        V = params.V
-        X = data
+    params.S = S
 
-        log_p = np.zeros(2)
 
-        prec = 1 / np.diag(S)
+def update_V(data, params):
+    gamma = params.gamma
+    F = params.F
+    S = params.S
+    Z = params.Z
+    V = params.V
+    X = data
 
-        rows = np.arange(params.D)
+    FF = np.square(F).sum(axis=1)
 
-        np.random.shuffle(rows)
+    R = X - np.dot(Z * V, F)
 
-        cols = np.arange(params.K)
+    for d in range(params.D):
+        for k in range(params.K):
+            rk = R[d] + Z[d, k] * V[d, k] * F[k]
 
-        np.random.shuffle(cols)
+            prec = gamma + Z[d, k] * S[d, d] * FF[k]
 
-        for d in rows:
-            m = np.sum(U, axis=0)
+            mu = Z[d, k] * (S[d, d] / prec) * np.dot(F[k], rk)
 
-            m -= U[d]
+            V[d, k] = np.random.normal(mu, 1 / prec)
 
-            a = m + priors.U[0]
+            R[d] = rk - Z[d, k] * V[d, k] * F[k]
 
-            b = (params.D - m) + priors.U[1]
+    params.V = V
 
-            for k in cols:
-                if m[k] == 0:
-                    continue
 
-                U[d, k] = 0
+def update_Z(data, params, priors, ibp=False, num_particles=10, resample_threshold=0.5, update_type='g'):
+    alpha = params.alpha
+    F = params.F
+    S = params.S
+    Z = params.Z
+    V = params.V
+    X = data
 
-                log_p[0] = np.log(b[k]) + log_p_fn(prec[d], U[d], V[d], X[d], F)
+    proposal = MultivariateGaussianProposal(np.zeros(params.D), (1 / params.gamma) * np.eye(params.D))
 
-                U[d, k] = 1
+    for row_idx in pgfa.updates.feature_matrix.get_rows(params.D):
+        density = Density(S[row_idx, row_idx], F)
 
-                log_p[1] = np.log(a[k]) + log_p_fn(prec[d], U[d], V[d], X[d], F)
+        x = X[row_idx]
 
-                log_p = log_normalize(log_p)
+        z = Z[row_idx]
 
-                U[d, k] = discrete_rvs(np.exp(log_p))
+        m = np.sum(Z, axis=0)
 
-            if priors.alpha is not None:
-                self._update_U_singletons(d, X, params, priors)
+        m -= z
 
-    def _update_U_row(self, data, params, priors):
-        F = params.F
-        S = params.S
-        U = params.U
-        V = params.V
-        X = data
+        a = priors.Z[0] + m
 
-        Us = list(map(np.array, itertools.product([0, 1], repeat=params.K)))
+        b = priors.Z[1] + (params.D - 1 - m)
 
-        Us = np.array(Us, dtype=np.int)
+        cols = pgfa.updates.feature_matrix.get_cols(m, include_singletons=(not ibp))
 
-        for d in range(params.D):
-            m = np.sum(U, axis=0)
+        if update_type == 'g':
+            Z[row_idx] = pgfa.updates.feature_matrix.do_gibbs_update(density, a, b, cols, x, z, V)
 
-            m -= U[d]
+        elif update_type == 'pg':
+            Z[row_idx] = pgfa.updates.feature_matrix.do_particle_gibbs_update(
+                density, a, b, cols, x, z, V,
+                annealed=False, num_particles=num_particles, resample_threshold=resample_threshold
+            )
 
-            a = m + priors.U[0]
+        elif update_type == 'pga':
+            Z[row_idx] = pgfa.updates.feature_matrix.do_particle_gibbs_update(
+                density, a, b, cols, x, z, V,
+                annealed=True, num_particles=num_particles, resample_threshold=resample_threshold
+            )
 
-            b = (params.D - m) + priors.U[1]
+        elif update_type == 'rg':
+            Z[row_idx] = pgfa.updates.feature_matrix.do_row_gibbs_update(density, a, b, cols, x, z, V)
 
-            if priors.alpha is not None:
-                idxs = (m > 0)
-
-                a = a[idxs]
-
-                b = b[idxs]
-
-                K = np.sum(idxs)
-
-                Us = list(map(np.array, itertools.product([0, 1], repeat=K)))
-
-                Us = np.array(Us, dtype=np.int)
-
-            else:
-                idxs = np.arange(params.K)
-
-            log_p = np.zeros(len(Us))
-
-            for i, u in enumerate(Us):
-                log_p[i] = np.sum(u * np.log(a)) + np.sum((1 - u) * np.log(b)) + \
-                    log_p_fn(1 / S[d, d], u, V[d, idxs], X[d], F[idxs])
-
-            log_p = log_normalize(log_p)
-
-            p = np.exp(log_p)
-
-            idx = discrete_rvs(p)
-
-            U[d, idxs] = Us[idx]
-
-            if priors.alpha is not None:
-                self._update_U_singletons(d, X, params, priors)
-
-    def _update_U_singletons(self, d, data, params, priors):
-        F = params.F
-        S = params.S
-        U = params.U
-        V = params.V
-        W = params.W
-        X = data
-
-        m = np.sum(U, axis=0)
-
-        m -= U[d]
-
-        idxs = (m == 0)
-
-        r = X[d] - np.dot(W[d, ~idxs], F[~idxs])
-
-        s = S[d, d]
-
-        kappa_old = np.sum(idxs)
-
-        # Old
-        v_old = V[d, idxs]
-
-        log_p_old = self._get_singleton_log_p(r, s, v_old)
-
-        # New
-        kappa_new = np.random.poisson(params.alpha / params.D)
-
-        v_new = np.random.normal(0, np.sqrt(params.gamma), size=kappa_new)
-
-        log_p_new = self._get_singleton_log_p(r, s, v_new)
-
-        log_mh_ratio = log_p_new - log_p_old
-
-        u = np.random.random()
-
-        if np.log(u) < log_mh_ratio:
-            params.U[d, idxs] = 0
-
-            params = self._remove_empty_features(params)
-
-            if kappa_old < kappa_new:
-                K = params.K
-
-                params.F = np.row_stack([params.F, self._get_singleton_F(r, s, v_new)])
-
-                params.U = np.column_stack([params.U, np.zeros((params.D, kappa_new))])
-
-                params.U[d, K:] = 1
-
-                params.V = np.column_stack(
-                    [params.V, np.random.normal(0, np.sqrt(params.gamma), size=(params.D, kappa_new))]
-                )
-
-                params.V[d, K:] = v_new
-
-                self._update_V(
-                    data, params, ds=[d], ks=range(K + 1, K + kappa_new)
-                )
-
-                # TODO: Resample V from posterior for new cols
-
-    def _update_V(self, data, params, ds=None, ks=None):
-        V = np.zeros(params.V.shape)
-
-        gamma = params.gamma
-        F = params.F
-        S = params.S
-        U = params.U
-        W = params.W
-        X = data
-
-        FF = np.square(F).sum(axis=1)
-
-        R = X - np.dot(W, F)
-
-        if ds is None:
-            ds = range(params.D)
-
-        if ks is None:
-            ks = range(params.K)
-
-        for d in ds:
-            for k in ks:
-                if U[d, k] == 1:
-                    rk = R[d] + W[d, k] * F[k]
-
-                else:
-                    rk = R[d]
-
-                prec = (FF[k] / S[d, d]) + (1 / gamma)
-
-                sigma = 1 / prec
-
-                mu = (sigma / S[d, d]) * np.dot(F[k], rk)
-
-                V[d, k] = np.random.normal(mu, sigma)
-
-                if U[d, k] == 1:
-                    W[d, k] = V[d, k]
-
-                else:
-                    W[d, k] = 0
-
-                R[d] = rk - W[d, k] * F[k]
+        if ibp:
+            V, Z = pgfa.updates.feature_matrix.do_mh_singletons_update(
+                row_idx, density, proposal, alpha, V, X, Z
+            )
 
         params.V = V
 
-    def _get_singleton_log_p(self, r, s, v):
-        K = len(v)
+        params.Z = Z
 
-        N = len(r)
 
-        log_p = 0
+#=========================================================================
+# Container classes
+#=========================================================================
+def get_params_from_data(data, K=None):
+    D = data.shape[1]
+    N = data.shape[0]
 
-        M = (1 / s) * np.dot(v, v.T) + np.eye(K)
+    if K is None:
+        Z = ibp_rvs(1, D)
 
-        temp = (1 / s) * np.dot(np.linalg.inv(M), v)
+    else:
+        Z = ffa_rvs(1, 1, K, D)
 
-        for n in range(N):
-            m = temp * r[n]
+    K = Z.shape[1]
 
-            log_p += 0.5 * np.dot(m.T, np.dot(M, m))
+    F = np.random.normal(0, 1, size=(K, N))
 
-        log_p -= 0.5 * N * np.log(np.linalg.det(M))
+    S = np.eye(D)
 
-        return log_p
+    V = np.random.multivariate_normal(np.zeros(K), np.eye(K), size=D)
 
-    def _get_singleton_F(self, r, s, v):
-        K = len(v)
-
-        N = len(r)
-
-        prec = (1 / s) * np.dot(v, v.T) + np.eye(K)
-
-        cov = np.linalg.inv(prec)
-
-        temp = (1 / s) * np.dot(cov, v)
-
-        cov_chol = np.linalg.cholesky(cov)
-
-        mean = np.dot(temp[:, np.newaxis], r[np.newaxis, :])
-
-        F = mean + np.dot(cov_chol, np.random.normal(0, 1, size=(K, N)))
-
-        return F
-
-    def _remove_empty_features(self, params):
-        m = np.sum(params.U, axis=0)
-
-        idxs = (m == 0)
-
-        params.F = params.F[~idxs]
-
-        params.U = params.U[:, ~idxs]
-
-        params.V = params.V[:, ~idxs]
-
-        return params
+    return Parameters(1, 1, F, S, Z, V)
 
 
 class Parameters(object):
-    def __init__(self, alpha, gamma, F, S, U, V):
+    def __init__(self, alpha, gamma, F, S, Z, V):
         self.alpha = alpha
 
         self.gamma = gamma
@@ -478,7 +281,7 @@ class Parameters(object):
 
         self.S = S
 
-        self.U = U
+        self.Z = Z
 
         self.V = V
 
@@ -496,39 +299,71 @@ class Parameters(object):
 
     @property
     def W(self):
-        return self.U * self.V
+        return self.Z * self.V
 
     def copy(self):
-        return Parameters(self.alpha, self.gamma, self.F.copy(), self.S.copy(), self.U.copy(), self.V.copy())
+        return Parameters(self.alpha, self.gamma, self.F.copy(), self.S.copy(), self.Z.copy(), self.V.copy())
 
 
 class Priors(object):
-    def __init__(self, alpha, gamma, S, U):
+    def __init__(self, alpha=None, gamma=None, S=None, Z=None):
+        if alpha is None:
+            alpha = np.ones(2)
+
         self.alpha = alpha
+
+        if gamma is None:
+            gamma = np.ones(2)
 
         self.gamma = gamma
 
+        if S is None:
+            S = np.ones(2)
+
         self.S = S
 
-        self.U = U
+        if Z is None:
+            Z = np.ones(2)
+
+        self.Z = Z
 
 
-@numba.njit
-def log_p_fn(precision, u, v, x, F):
-    N = F.shape[1]
+#=========================================================================
+# Densities and proposals
+#=========================================================================
+class Density(object):
+    def __init__(self, row_idx, s, F):
+        self.row_idx = row_idx
 
-    log_p = 0
+        self.s = s
 
-    w = u * v
+        self.F = F
 
-    for n in range(N):
-        f = F[:, n]
+    def log_p(self, x, z, V):
+        N = self.F.shape[1]
 
-        mean = np.sum(w * f)
+        log_p = 0
 
-        log_p += log_normal_likelihood(x[n], mean, precision)
+        w = z * V[self.row_idx]
 
-    return log_p
+        for n in range(N):
+            f = self.F[:, n]
+
+            mean = np.sum(w * f)
+
+            log_p += log_normal_likelihood(x[n], mean, self.precision)
+
+        return log_p
+
+
+class MultivariateGaussianProposal(object):
+    def __init__(self, mean, covariance):
+        self.mean = mean
+
+        self.covariance = covariance
+
+    def rvs(self, size=None):
+        return np.random.multivariate_normal(self.mean, self.covariance, size=size)
 
 
 @numba.njit
@@ -536,6 +371,9 @@ def log_normal_likelihood(x, mean, precision):
     return -0.5 * precision * (x - mean)**2
 
 
+#=========================================================================
+# Benchmark utils
+#=========================================================================
 def get_rmse(data, params):
     X_true = data
 
