@@ -24,6 +24,7 @@ class NonparametricSparaseFactorAnalysisModel(object):
 
         self.priors = priors
 
+    @property
     def log_p(self):
         params = self.params
         priors = self.priors
@@ -41,7 +42,7 @@ class NonparametricSparaseFactorAnalysisModel(object):
 
         # Likelihood
         for n in range(params.N):
-            log_p += scipy.stats.multivariate_normal.logpdf(X[:, n], np.dot(W, F[:, n]), 1 / S)
+            log_p += scipy.stats.multivariate_normal.logpdf(X[:, n], np.dot(W, F[:, n]), np.linalg.inv(S))
 
         # Binary matrix prior
         if priors.alpha is None:
@@ -71,13 +72,15 @@ class NonparametricSparaseFactorAnalysisModel(object):
 
         return log_p
 
-    def log_predictive_pdf(self, data, params):
-        S = params.S
-        W = params.W
+    def log_predictive_pdf(self, data):
+        S = self.params.S
+        W = self.params.W
 
-        mean = np.zeros(params.D)
+        mean = np.zeros(self.params.D)
 
         covariance = np.linalg.inv(S) + W @ W.T
+
+        print(self.params.D)
 
         try:
             log_p = np.sum(scipy.stats.multivariate_normal.logpdf(data.T, mean, covariance))
@@ -92,6 +95,7 @@ class NonparametricSparaseFactorAnalysisModel(object):
         update_Z(
             self.data,
             self.params,
+            self.priors,
             ibp=self.ibp,
             num_particles=num_particles,
             resample_threshold=resample_threshold,
@@ -102,7 +106,7 @@ class NonparametricSparaseFactorAnalysisModel(object):
 
         update_F(self.data, self.params)
 
-        update_gamma(self.data, self.params)
+        update_gamma(self.params, self.priors)
 
         update_S(self.data, self.params, self.priors)
 
@@ -203,7 +207,7 @@ def update_Z(data, params, priors, ibp=False, num_particles=10, resample_thresho
     proposal = MultivariateGaussianProposal(np.zeros(params.D), (1 / params.gamma) * np.eye(params.D))
 
     for row_idx in pgfa.updates.feature_matrix.get_rows(params.D):
-        density = Density(S[row_idx, row_idx], F)
+        density = Density(row_idx, S[row_idx, row_idx], F)
 
         x = X[row_idx]
 
@@ -251,8 +255,8 @@ def update_Z(data, params, priors, ibp=False, num_particles=10, resample_thresho
 # Container classes
 #=========================================================================
 def get_params_from_data(data, K=None):
-    D = data.shape[1]
-    N = data.shape[0]
+    D = data.shape[0]
+    N = data.shape[1]
 
     if K is None:
         Z = ibp_rvs(1, D)
@@ -268,11 +272,11 @@ def get_params_from_data(data, K=None):
 
     V = np.random.multivariate_normal(np.zeros(K), np.eye(K), size=D)
 
-    return Parameters(1, 1, F, S, Z, V)
+    return Parameters(1, 1, F, S, V, Z)
 
 
 class Parameters(object):
-    def __init__(self, alpha, gamma, F, S, Z, V):
+    def __init__(self, alpha, gamma, F, S, V, Z):
         self.alpha = alpha
 
         self.gamma = gamma
@@ -281,9 +285,9 @@ class Parameters(object):
 
         self.S = S
 
-        self.Z = Z
-
         self.V = V
+
+        self.Z = Z
 
     @property
     def D(self):
@@ -302,7 +306,7 @@ class Parameters(object):
         return self.Z * self.V
 
     def copy(self):
-        return Parameters(self.alpha, self.gamma, self.F.copy(), self.S.copy(), self.Z.copy(), self.V.copy())
+        return Parameters(self.alpha, self.gamma, self.F.copy(), self.S.copy(), self.V.copy(), self.Z.copy())
 
 
 class Priors(object):
@@ -351,7 +355,7 @@ class Density(object):
 
             mean = np.sum(w * f)
 
-            log_p += log_normal_likelihood(x[n], mean, self.precision)
+            log_p += log_normal_likelihood(x[n], mean, self.s)
 
         return log_p
 
