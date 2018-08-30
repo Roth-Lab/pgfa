@@ -62,7 +62,7 @@ def log_normalize(log_p):
 def ffa_rvs(a, b, K, N):
     p = np.random.beta(a, b, size=K)
 
-    Z = np.zeros((N, K))
+    Z = np.zeros((N, K), dtype=np.int64)
 
     for k in range(K):
         Z[:, k] = np.random.multinomial(1, [1 - p[k], p[k]], size=N).argmax(axis=1)
@@ -73,7 +73,7 @@ def ffa_rvs(a, b, K, N):
 def ibp_rvs(alpha, N):
     K = np.random.poisson(alpha)
 
-    Z = np.ones((1, K))
+    Z = np.ones((1, K), dtype=np.int64)
 
     for n in range(1, N):
         K = Z.shape[1]
