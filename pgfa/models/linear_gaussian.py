@@ -21,9 +21,9 @@ class CollapsedLinearGaussianModel(object):
     def update(self, update_type='gibbs'):
         update_Z_collapsed(self.data, self.params, ibp=self.ibp, update_type=update_type)
 
-        update_alpha(self.data, self.params, self.priors)
+        update_alpha(self.params, self.priors)
 
-        update_A(self.data, self.params)
+        update_V(self.data, self.params)
 
         update_tau_a(self.params, self.priors)
 
@@ -53,13 +53,13 @@ class LinearGaussianModel(object):
         alpha = self.params.alpha
         t_a = self.params.tau_a
         t_x = self.params.tau_x
-        A = self.params.A
+        V = self.params.V
         Z = self.params.Z
         X = self.data
 
-        D = X.shape[1]
-        K = Z.shape[1]
-        N = Z.shape[0]
+        D = self.params.D
+        K = self.params.K
+        N = self.params.N
 
         log_p = 0
 
@@ -80,9 +80,9 @@ class LinearGaussianModel(object):
         else:
             log_p += log_ffa_pdf(alpha / K, 1, Z)
 
-        # Prior on A
+        # Prior on V
         log_p += scipy.stats.matrix_normal.logpdf(
-            A,
+            V,
             mean=np.zeros((K, D)),
             colcov=np.eye(D),
             rowcov=(1 / t_x) * np.eye(K)
@@ -90,7 +90,7 @@ class LinearGaussianModel(object):
 
         log_p += scipy.stats.matrix_normal.logpdf(
             X,
-            mean=Z @ A,
+            mean=Z @ V,
             colcov=np.eye(D),
             rowcov=(1 / t_x) * np.eye(N)
         )
@@ -112,9 +112,9 @@ class LinearGaussianModel(object):
             update_type=update_type
         )
 
-        update_alpha(self.data, self.params, self.priors)
+        update_alpha(self.params, self.priors)
 
-        update_A(self.data, self.params)
+        update_V(self.data, self.params)
 
         update_tau_a(self.params, self.priors)
 
@@ -124,62 +124,50 @@ class LinearGaussianModel(object):
 #=========================================================================
 # Updates
 #=========================================================================
-def update_alpha(data, params, priors):
-    D = data.shape[0]
-    K = params.Z.shape[1]
+def update_alpha(params, priors):
+    a = params.K + priors.alpha[0]
 
-    a = K + priors.alpha[0]
-
-    b = np.sum(1 / np.arange(1, D + 1)) + priors.alpha[1]
+    b = np.sum(1 / np.arange(1, params.N + 1)) + priors.alpha[1]
 
     params.alpha = np.random.gamma(a, 1 / b)
 
 
-def update_A(data, params):
+def update_V(data, params):
     t_a = params.tau_a
     t_x = params.tau_x
     Z = params.Z
     X = data
 
-    D = X.shape[1]
-    K = Z.shape[1]
-
-    if K == 0:
+    if params.K == 0:
         return
 
-    M = np.linalg.inv(Z.T @ Z + (t_a / t_x) * np.eye(K))
+    M = np.linalg.inv(Z.T @ Z + (t_a / t_x) * np.eye(params.K))
 
-    params.A = scipy.stats.matrix_normal.rvs(
+    params.V = scipy.stats.matrix_normal.rvs(
         mean=M @ Z.T @ X,
         rowcov=(1 / t_x) * M,
-        colcov=np.eye(D)
+        colcov=np.eye(params.D)
     )
 
 
 def update_tau_a(params, priors):
-    A = params.A
+    V = params.V
 
-    D = A.shape[1]
-    K = A.shape[0]
+    a = priors.tau_a[0] + 0.5 * params.K * params.D
 
-    a = priors.tau_a[0] + 0.5 * K * D
-
-    b = priors.tau_a[1] + 0.5 * np.trace(A.T @ A)
+    b = priors.tau_a[1] + 0.5 * np.trace(V.T @ V)
 
     params.tau_a = np.random.gamma(a, 1 / b)
 
 
 def update_tau_x(data, params, priors):
-    A = params.A
+    V = params.V
     Z = params.Z
     X = data
 
-    D = X.shape[1]
-    N = X.shape[0]
+    a = priors.tau_x[0] + 0.5 * params.N * params.D
 
-    a = priors.tau_x[0] + 0.5 * N * D
-
-    Y = X - Z @ A
+    Y = X - Z @ V
 
     b = priors.tau_x[1] + 0.5 * np.trace(Y.T @ Y)
 
@@ -188,21 +176,17 @@ def update_tau_x(data, params, priors):
 
 def update_Z(data, params, ibp=False, num_particles=10, resample_threshold=0.5, update_type='g'):
     alpha = params.alpha
-    A = params.A
+    V = params.V
     Z = params.Z
     X = data
 
-    D = X.shape[1]
-    K = Z.shape[1]
-    N = Z.shape[0]
-
-    a_0, b_0 = _get_feature_priors(alpha, K, ibp)
+    a_0, b_0 = _get_feature_priors(alpha, params.K, ibp)
 
     density = LinearGaussianDensity(params.tau_x)
 
-    proposal = MultivariateGaussianProposal(np.zeros(D), 1 / params.tau_a * np.eye(D))
+    proposal = MultivariateGaussianProposal(np.zeros(params.D), (1 / params.tau_a) * np.eye(params.D))
 
-    for row_idx in pgfa.updates.feature_matrix.get_rows(N):
+    for row_idx in pgfa.updates.feature_matrix.get_rows(params.N):
         x = X[row_idx]
 
         z = Z[row_idx]
@@ -213,34 +197,34 @@ def update_Z(data, params, ibp=False, num_particles=10, resample_threshold=0.5, 
 
         a = a_0 + m
 
-        b = b_0 + (N - m)
+        b = b_0 + (params.N - 1 - m)
 
         cols = pgfa.updates.feature_matrix.get_cols(m, include_singletons=(not ibp))
 
         if update_type == 'g':
-            Z[row_idx] = pgfa.updates.feature_matrix.do_gibbs_update(density, a, b, cols, x, z, A)
+            Z[row_idx] = pgfa.updates.feature_matrix.do_gibbs_update(density, a, b, cols, x, z, V)
 
         elif update_type == 'pg':
             Z[row_idx] = pgfa.updates.feature_matrix.do_particle_gibbs_update(
-                density, a, b, cols, x, z, A,
+                density, a, b, cols, x, z, V,
                 annealed=False, num_particles=num_particles, resample_threshold=resample_threshold
             )
 
         elif update_type == 'pga':
             Z[row_idx] = pgfa.updates.feature_matrix.do_particle_gibbs_update(
-                density, a, b, cols, x, z, A,
+                density, a, b, cols, x, z, V,
                 annealed=True, num_particles=num_particles, resample_threshold=resample_threshold
             )
 
         elif update_type == 'rg':
-            Z[row_idx] = pgfa.updates.feature_matrix.do_row_gibbs_update(density, a, b, cols, x, z, A)
+            Z[row_idx] = pgfa.updates.feature_matrix.do_row_gibbs_update(density, a, b, cols, x, z, V)
 
         if ibp:
-            A, Z = pgfa.updates.feature_matrix.do_mh_singletons_update(
-                row_idx, density, proposal, alpha, A, X, Z
+            V, Z = pgfa.updates.feature_matrix.do_mh_singletons_update(
+                row_idx, density, proposal, alpha, V, X, Z
             )
 
-    params.A = A
+    params.V = V
 
     params.Z = Z
 
@@ -250,21 +234,18 @@ def update_Z_collapsed(data, params, ibp=False, update_type='gibbs'):
     Z = params.Z
     X = data
 
-    K = Z.shape[1]
-    N = Z.shape[0]
-
-    a_0, b_0 = _get_feature_priors(alpha, K, ibp)
+    a_0, b_0 = _get_feature_priors(alpha, params.K, ibp)
 
     density = LinearGaussianMarginalDensity(params.tau_a, params.tau_x)
 
-    for row_idx in pgfa.updates.feature_matrix.get_rows(N):
+    for row_idx in pgfa.updates.feature_matrix.get_rows(params.N):
         m = np.sum(Z, axis=0)
 
         m -= Z[row_idx]
 
         a = a_0 + m
 
-        b = b_0 + (N - m)
+        b = b_0 + (params.N - 1 - m)
 
         cols = pgfa.updates.feature_matrix.get_cols(m, include_singletons=(not ibp))
 
@@ -309,27 +290,39 @@ class LinearGaussianParameters(object):
 
         K = Z.shape[1]
 
-        A = np.random.multivariate_normal(np.zeros(D), np.eye(D), size=K)
+        V = np.random.multivariate_normal(np.zeros(D), np.eye(D), size=K)
 
-        return LinearGaussianParameters(1, 1, 1, A, Z)
+        return LinearGaussianParameters(1, 1, 1, V, Z)
 
-    def __init__(self, alpha, tau_a, tau_x, A, Z):
+    def __init__(self, alpha, tau_a, tau_x, V, Z):
         self.alpha = alpha
 
         self.tau_a = tau_a
 
         self.tau_x = tau_x
 
-        self.A = A
+        self.V = V
 
         self.Z = Z
+
+    @property
+    def D(self):
+        return self.V.shape[1]
+
+    @property
+    def K(self):
+        return self.Z.shape[1]
+
+    @property
+    def N(self):
+        return self.Z.shape[0]
 
     def copy(self):
         return LinearGaussianParameters(
             self.alpha,
             self.tau_a,
             self.tau_x,
-            self.A.copy(),
+            self.V.copy(),
             self.Z.copy()
         )
 
