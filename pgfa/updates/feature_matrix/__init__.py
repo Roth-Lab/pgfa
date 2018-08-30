@@ -1,4 +1,5 @@
 from .collapsed_gibbs import do_collaped_gibbs_update
+from .collapsed_particle_gibbs import do_collapsed_particle_gibbs_update
 from .collapsed_row_gibbs import do_collapsed_row_gibbs_update
 from .collapsed_singletons import do_collapsed_mh_singletons_update
 from .gibbs import do_gibbs_update
