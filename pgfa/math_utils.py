@@ -145,3 +145,37 @@ def log_ibp_pdf(alpha, Z):
         log_p -= history_counts[h] * log_factorial(N)
 
     return log_p
+
+
+@numba.jit(cache=True, nopython=True)
+def cholesky_update(L, x, alpha=1, inplace=True):
+    """ Rank one update of a Cholesky factorized matrix.
+    """
+    dim = len(x)
+
+    x = x.copy()
+
+    if not inplace:
+        L = L.copy()
+
+    for i in range(dim):
+        r = np.sqrt(L[i, i] ** 2 + alpha * x[i] ** 2)
+
+        c = r / L[i, i]
+
+        s = x[i] / L[i, i]
+
+        L[i, i] = r
+
+        idx = i + 1
+
+        L[idx:dim, i] = (L[idx:dim, i] + alpha * s * x[idx:dim]) / c
+
+        x[idx:dim] = c * x[idx:dim] - s * L[idx:dim, i]
+
+    return L
+
+
+@numba.jit(cache=True, nopython=True)
+def cholesky_log_det(X):
+    return 2 * np.sum(np.log(np.diag(X)))
