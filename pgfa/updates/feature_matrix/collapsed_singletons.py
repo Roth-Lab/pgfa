@@ -15,7 +15,10 @@ def do_collapsed_mh_singletons_update(row, density, alpha, X, Z):
 
     K_non_singleton = len(cols)
 
-    K_new = K + np.random.poisson(alpha / N)
+    K_new = K_non_singleton + np.random.poisson(alpha / N)
+
+    if K_new == K:
+        return Z
 
     Z_new = np.zeros((N, K_new), dtype=np.int64)
 
