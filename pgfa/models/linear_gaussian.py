@@ -1,13 +1,29 @@
 import numba
 import numpy as np
+import scipy.linalg
 import scipy.stats
 
-from pgfa.math_utils import ffa_rvs, ibp_rvs, log_ffa_pdf, log_ibp_pdf
+from pgfa.math_utils import cholesky_log_det, cholesky_update, ffa_rvs, ibp_rvs, log_ffa_pdf, log_ibp_pdf
 
 import pgfa.updates.feature_matrix
 
 
 class CollapsedLinearGaussianModel(object):
+    def __init__(self, data, K=None, params=None, priors=None):
+        self.data = data
+
+        self.ibp = (K is None)
+
+        if params is None:
+            params = get_params_from_data(data, K=K)
+
+        self.params = params
+
+        if priors is None:
+            priors = LinearGaussianPriors()
+
+        self.priors = priors
+
     def log_p(self, data, params):
         """ Log of joint pdf.
         """
@@ -18,8 +34,15 @@ class CollapsedLinearGaussianModel(object):
         """
         pass
 
-    def update(self, update_type='gibbs'):
-        update_Z_collapsed(self.data, self.params, ibp=self.ibp, update_type=update_type)
+    def update(self, num_particles=10, resample_threshold=0.5, update_type='g'):
+        update_Z_collapsed(
+            self.data,
+            self.params,
+            ibp=self.ibp,
+            num_particles=num_particles,
+            resample_threshold=resample_threshold,
+            update_type=update_type
+        )
 
         update_alpha(self.params, self.priors)
 
@@ -37,7 +60,7 @@ class LinearGaussianModel(object):
         self.ibp = (K is None)
 
         if params is None:
-            params = LinearGaussianParameters.get_from_data(data, K=K)
+            params = get_params_from_data(data, K=K)
 
         self.params = params
 
@@ -229,16 +252,16 @@ def update_Z(data, params, ibp=False, num_particles=10, resample_threshold=0.5, 
     params.Z = Z
 
 
-def update_Z_collapsed(data, params, ibp=False, update_type='gibbs'):
+def update_Z_collapsed(data, params, ibp=False, num_particles=10, resample_threshold=0.5, update_type='g'):
     alpha = params.alpha
     Z = params.Z
     X = data
 
     a_0, b_0 = _get_feature_priors(alpha, params.K, ibp)
 
-    density = LinearGaussianMarginalDensity(params.tau_a, params.tau_x)
-
     for row_idx in pgfa.updates.feature_matrix.get_rows(params.N):
+        density = LinearGaussianMarginalDensity(row_idx, params.tau_a, params.tau_x, Z, rank_one=False)
+
         m = np.sum(Z, axis=0)
 
         m -= Z[row_idx]
@@ -252,10 +275,24 @@ def update_Z_collapsed(data, params, ibp=False, update_type='gibbs'):
         if update_type == 'g':
             Z[row_idx] = pgfa.updates.feature_matrix.do_collaped_gibbs_update(density, a, b, cols, row_idx, X, Z)
 
+        elif update_type == 'pg':
+            Z[row_idx] = pgfa.updates.feature_matrix.do_collapsed_particle_gibbs_update(
+                density, a, b, cols, row_idx, X, Z,
+                annealed=False, num_particles=num_particles, resample_threshold=resample_threshold
+            )
+
+        elif update_type == 'pga':
+            Z[row_idx] = pgfa.updates.feature_matrix.do_collapsed_particle_gibbs_update(
+                density, a, b, cols, row_idx, X, Z,
+                annealed=True, num_particles=num_particles, resample_threshold=resample_threshold
+            )
+
         elif update_type == 'rg':
             Z[row_idx] = pgfa.updates.feature_matrix.do_collapsed_row_gibbs_update(density, a, b, cols, row_idx, X, Z)
 
         if ibp:
+            density = LinearGaussianMarginalDensity(row_idx, params.tau_a, params.tau_x, Z, rank_one=False)
+
             Z = pgfa.updates.feature_matrix.do_collapsed_mh_singletons_update(row_idx, density, alpha, X, Z)
 
     params.Z = Z
@@ -276,24 +313,24 @@ def _get_feature_priors(alpha, K, ibp):
 #=========================================================================
 # Container classes
 #=========================================================================
+def get_params_from_data(data, K=None):
+    D = data.shape[1]
+    N = data.shape[0]
+
+    if K is None:
+        Z = ibp_rvs(1, N)
+
+    else:
+        Z = ffa_rvs(1, 1, K, N)
+
+    K = Z.shape[1]
+
+    V = np.random.multivariate_normal(np.zeros(D), np.eye(D), size=K)
+
+    return LinearGaussianParameters(1, 1, 1, V, Z)
+
+
 class LinearGaussianParameters(object):
-    @staticmethod
-    def get_from_data(data, K=None):
-        D = data.shape[1]
-        N = data.shape[0]
-
-        if K is None:
-            Z = ibp_rvs(1, N)
-
-        else:
-            Z = ffa_rvs(1, 1, K, N)
-
-        K = Z.shape[1]
-
-        V = np.random.multivariate_normal(np.zeros(D), np.eye(D), size=K)
-
-        return LinearGaussianParameters(1, 1, 1, V, Z)
-
     def __init__(self, alpha, tau_a, tau_x, V, Z):
         self.alpha = alpha
 
@@ -371,10 +408,27 @@ class LinearGaussianDensity(object):
 
 
 class LinearGaussianMarginalDensity(object):
-    def __init__(self, t_a, t_x):
+    def __init__(self, row, t_a, t_x, Z, rank_one=False):
+        self.row = row
+
         self.t_a = t_a
 
         self.t_x = t_x
+
+        self.rank_one = rank_one
+
+        if rank_one:
+            K = Z.shape[1]
+
+            M_inv = Z.T @ Z + (t_a / t_x) * np.eye(K)
+
+            L, _ = scipy.linalg.cho_factor(M_inv, lower=True)
+
+            z = Z[row]
+
+            cholesky_update(L, z, alpha=-1, inplace=True)
+
+            self.L_i = L
 
     def log_p(self, X, Z):
         t_a = self.t_a
@@ -384,17 +438,30 @@ class LinearGaussianMarginalDensity(object):
         K = Z.shape[1]
         N = X.shape[0]
 
-        M = np.linalg.inv(Z.T @ Z + (t_a / t_x) * np.eye(K))
-
-        XZ = X.T @ Z
-
-        XX = X.T @ X
-
         log_p = 0
-        log_p += 0.5 * (N - K) * D * np.log(t_x)
-        log_p -= 0.5 * N * D * np.log(2 * np.pi)
-        log_p -= 0.5 * D * np.log(np.linalg.det(M))
-        log_p -= 0.5 * t_x * np.trace(XX - XZ @ M @ XZ.T)
+        log_p += 0.5 * N * D * np.log(2 * np.pi)
+        log_p += 0.5 * (N - K) * D * t_x
+        log_p += 0.5 * K * D * t_a
+
+        if self.rank_one:
+            L_i = self.L_i
+
+            z = Z[self.row]
+
+            L = cholesky_update(L_i, z, alpha=1, inplace=False)
+
+            MZ = scipy.linalg.cho_solve((L, True), Z.T)
+
+            log_det_M = -1 * cholesky_log_det(L)
+
+            log_p += 0.5 * D * log_det_M
+            log_p -= 0.5 * t_x * np.trace(X.T @ (np.eye(N) - Z @ MZ) @ X)
+
+        else:
+            M = np.linalg.inv(Z.T @ Z + (t_a / t_x) * np.eye(K))
+
+            log_p += 0.5 * D * np.prod(np.linalg.slogdet(M))
+            log_p -= 0.5 * t_x * np.trace(X.T @ (np.eye(N) - Z @ M @ Z.T) @ X)
 
         return log_p
 
