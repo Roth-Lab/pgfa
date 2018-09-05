@@ -5,7 +5,18 @@ from pgfa.math_utils import discrete_rvs, log_normalize, log_sum_exp
 
 
 @numba.jit
-def do_particle_gibbs_update(density, a, b, cols, x, z, V, annealed=True, num_particles=10, resample_threshold=0.5):
+def do_particle_gibbs_update(
+        density,
+        a,
+        b,
+        cols,
+        row_idx,
+        data,
+        params,
+        annealed=True,
+        num_particles=10,
+        resample_threshold=0.5):
+
     T = len(cols)
 
     log_p = np.zeros(num_particles)
@@ -13,6 +24,8 @@ def do_particle_gibbs_update(density, a, b, cols, x, z, V, annealed=True, num_pa
     log_W = np.zeros(num_particles)
 
     particles = np.zeros((num_particles, T), dtype=np.int64)
+
+    z = params.Z[row_idx].copy()
 
     z_test = z.copy()
 
@@ -39,12 +52,12 @@ def do_particle_gibbs_update(density, a, b, cols, x, z, V, annealed=True, num_pa
 
             if annealed:
                 particles[i, t], log_p[i], log_norm = _propose_annealed(
-                    cols[:(t + 1)], density, a, b, x, z_test, V, T, idx=idx
+                    cols[:(t + 1)], row_idx, density, a, b, data, params, z_test, T, idx=idx
                 )
 
             else:
                 particles[i, t], log_p[i], log_norm = _propose(
-                    cols[:(t + 1)], density, a, b, x, z_test, V, idx=idx
+                    cols[:(t + 1)], row_idx, density, a, b, data, params, z_test, idx=idx
                 )
 
             log_w = log_norm - log_p_old[i]
@@ -59,31 +72,34 @@ def do_particle_gibbs_update(density, a, b, cols, x, z, V, annealed=True, num_pa
 
     z[cols] = particles[idx]
 
-    return z
+    params.Z[row_idx] = z
+
+    return params
 
 
-@numba.jit(nopython=True)
-def _log_target_pdf_annealed(cols, density, a, b, x, z, V, T):
+@numba.jit
+def _log_target_pdf_annealed(cols, row_idx, density, a, b, data, params, z, T):
+    params.Z[row_idx] = z
     t = len(cols)
     log_p = 0
     log_p += np.sum(z[cols] * np.log(a[cols]))
     log_p += np.sum((1 - z[cols]) * np.log(b[cols]))
     if t > 1:
-        log_p += ((t - 1) / (T - 1)) * density.log_p(x, z, V)
+        log_p += ((t - 1) / (T - 1)) * density.log_p(data, params)
     return log_p
 
 
 @numba.jit
-def _propose_annealed(cols, density, a, b, x, z, V, T, idx=-1):
+def _propose_annealed(cols, row_idx, density, a, b, data, params, z, T, idx=-1):
     log_p = np.zeros(2)
 
     z[cols[-1]] = 0
 
-    log_p[0] = _log_target_pdf_annealed(cols, density, a, b, x, z, V, T)
+    log_p[0] = _log_target_pdf_annealed(cols, row_idx, density, a, b, data, params, z, T)
 
     z[cols[-1]] = 1
 
-    log_p[1] = _log_target_pdf_annealed(cols, density, a, b, x, z, V, T)
+    log_p[1] = _log_target_pdf_annealed(cols, row_idx, density, a, b, data, params, z, T)
 
     log_norm = log_sum_exp(log_p)
 
@@ -100,25 +116,26 @@ def _propose_annealed(cols, density, a, b, x, z, V, T, idx=-1):
 
 
 @numba.jit
-def _log_target_pdf(cols, density, a, b, x, z, V):
+def _log_target_pdf(cols, row_idx, density, a, b, data, params, z):
+    params.Z[row_idx] = z
     log_p = 0
     log_p += np.sum(z[cols] * np.log(a[cols]))
     log_p += np.sum((1 - z[cols]) * np.log(b[cols]))
-    log_p += density.log_p(x, z, V)
+    log_p += density.log_p(data, params)
     return log_p
 
 
 @numba.jit
-def _propose(cols, density, a, b, x, z, V, idx=-1):
+def _propose(cols, row_idx, density, a, b, data, params, z, idx=-1):
     log_p = np.zeros(2)
 
     z[cols[-1]] = 0
 
-    log_p[0] = _log_target_pdf(cols, density, a, b, x, z, V)
+    log_p[0] = _log_target_pdf(cols, row_idx, density, a, b, data, params, z)
 
     z[cols[-1]] = 1
 
-    log_p[1] = _log_target_pdf(cols, density, a, b, x, z, V)
+    log_p[1] = _log_target_pdf(cols, row_idx, density, a, b, data, params, z)
 
     log_norm = log_sum_exp(log_p)
 
