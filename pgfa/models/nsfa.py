@@ -3,7 +3,7 @@ import numpy as np
 import numba
 import scipy.stats
 
-from pgfa.math_utils import ffa_rvs, ibp_rvs, log_ffa_pdf, log_ibp_pdf
+from pgfa.math_utils import ffa_rvs, ibp_rvs, log_ffa_pdf, log_ibp_pdf, do_metropolis_hastings_accept_reject
 
 import pgfa.updates.feature_matrix
 
@@ -42,22 +42,22 @@ class NonparametricSparaseFactorAnalysisModel(object):
 
         # Likelihood
         for n in range(params.N):
-            log_p += scipy.stats.multivariate_normal.logpdf(X[:, n], np.dot(W, F[:, n]), np.linalg.inv(S))
+            log_p += scipy.stats.multivariate_normal.logpdf(X[:, n], np.dot(W, F[:, n]), np.diag(1 / S))
 
         # Binary matrix prior
-        if priors.alpha is None:
-            log_p += log_ffa_pdf(priors.Z[0], priors.Z[1], Z)
-
-        else:
+        if self.ibp:
             log_p += log_ibp_pdf(alpha, Z)
 
             # Prior on alpha
             log_p += scipy.stats.gamma.logpdf(alpha, priors.alpha[0], scale=(1 / priors.alpha[1]))
 
+        else:
+            log_p += log_ffa_pdf(priors.Z[0], priors.Z[1], Z)
+
         # Common factors prior
         for k in range(params.K):
             log_p += scipy.stats.multivariate_normal.logpdf(
-                V[:, k], np.zeros(params.D), (1 / gamma) * np.eye(params.D)
+                V[k], np.zeros(params.D), (1 / gamma) * np.eye(params.D)
             )
 
         # Factor loadings prior
@@ -66,7 +66,7 @@ class NonparametricSparaseFactorAnalysisModel(object):
 
         # Noise covariance
         for d in range(params.D):
-            log_p += scipy.stats.gamma.logpdf(S[d, d], priors.S[0], scale=(1 / priors.S[1]))
+            log_p += scipy.stats.gamma.logpdf(S[d], priors.S[0], scale=(1 / priors.S[1]))
 
         log_p += scipy.stats.gamma.logpdf(1 / gamma, priors.gamma[0], scale=(1 / priors.gamma[1]))
 
@@ -78,9 +78,7 @@ class NonparametricSparaseFactorAnalysisModel(object):
 
         mean = np.zeros(self.params.D)
 
-        covariance = np.linalg.inv(S) + W @ W.T
-
-        print(self.params.D)
+        covariance = np.diag(1 / S) + W @ W.T
 
         try:
             log_p = np.sum(scipy.stats.multivariate_normal.logpdf(data.T, mean, covariance))
@@ -92,7 +90,7 @@ class NonparametricSparaseFactorAnalysisModel(object):
         return log_p
 
     def update(self, num_particles=10, resample_threshold=0.5, update_type='g'):
-        update_Z(
+        self.params = update_Z(
             self.data,
             self.params,
             self.priors,
@@ -102,15 +100,16 @@ class NonparametricSparaseFactorAnalysisModel(object):
             update_type=update_type
         )
 
-        update_V(self.data, self.params)
+        self.params = update_F(self.data, self.params)
 
-        update_F(self.data, self.params)
+        self.params = update_V(self.data, self.params)
 
-        update_gamma(self.params, self.priors)
+        self.params = update_gamma(self.params, self.priors)
 
-        update_S(self.data, self.params, self.priors)
+        self.params = update_S(self.data, self.params, self.priors)
 
-        update_alpha(self.params, self.priors)
+        if self.ibp:
+            self.params = update_alpha(self.params, self.priors)
 
 
 #=========================================================================
@@ -123,6 +122,8 @@ def update_alpha(params, priors):
 
     params.alpha = np.random.gamma(a, 1 / b)
 
+    return params
+
 
 def update_gamma(params, priors):
     a = priors.gamma[0] + 0.5 * np.sum(params.Z)
@@ -131,9 +132,11 @@ def update_gamma(params, priors):
 
     params.gamma = np.random.gamma(a, 1 / b)
 
+    return params
+
 
 def update_F(data, params):
-    S = params.S
+    S = np.diag(params.S)
     W = params.W
     X = data
 
@@ -149,9 +152,11 @@ def update_F(data, params):
 
     params.F = b + cov_chol @ eps
 
+    return params
+
 
 def update_S(data, params, priors):
-    S = np.zeros((params.D, params.D))
+    S = np.zeros(params.D)
 
     F = params.F
     W = params.W
@@ -164,9 +169,11 @@ def update_S(data, params, priors):
     b = priors.S[1] + 0.5 * np.sum(np.square(R), axis=1)
 
     for d in range(params.D):
-        S[d, d] = np.random.gamma(a, 1 / b[d])
+        S[d] = np.random.gamma(a, 1 / b[d])
 
     params.S = S
+
+    return params
 
 
 def update_V(data, params):
@@ -179,43 +186,32 @@ def update_V(data, params):
 
     FF = np.square(F).sum(axis=1)
 
-    R = X - np.dot(Z * V, F)
+    R = X - np.dot(Z * V.T, F)
 
     for d in range(params.D):
         for k in range(params.K):
-            rk = R[d] + Z[d, k] * V[d, k] * F[k]
+            rk = R[d] + Z[d, k] * V[k, d] * F[k]
 
-            prec = gamma + Z[d, k] * S[d, d] * FF[k]
+            prec = gamma + Z[d, k] * S[d] * FF[k]
 
-            mu = Z[d, k] * (S[d, d] / prec) * np.dot(F[k], rk)
+            mu = Z[d, k] * (S[d] / prec) * np.dot(F[k], rk)
 
-            V[d, k] = np.random.normal(mu, 1 / prec)
+            V[k, d] = np.random.normal(mu, 1 / prec)
 
-            R[d] = rk - Z[d, k] * V[d, k] * F[k]
+            R[d] = rk - Z[d, k] * V[k, d] * F[k]
 
     params.V = V
 
+    return params
+
 
 def update_Z(data, params, priors, ibp=False, num_particles=10, resample_threshold=0.5, update_type='g'):
-    alpha = params.alpha
-    F = params.F
-    S = params.S
-    Z = params.Z
-    V = params.V
-    X = data
-
-    proposal = MultivariateGaussianProposal(np.zeros(params.D), (1 / params.gamma) * np.eye(params.D))
-
     for row_idx in pgfa.updates.feature_matrix.get_rows(params.D):
-        density = Density(row_idx, S[row_idx, row_idx], F)
+        density = Density(row_idx)
 
-        x = X[row_idx]
+        m = np.sum(params.Z, axis=0)
 
-        z = Z[row_idx]
-
-        m = np.sum(Z, axis=0)
-
-        m -= z
+        m -= params.Z[row_idx]
 
         a = priors.Z[0] + m
 
@@ -224,31 +220,31 @@ def update_Z(data, params, priors, ibp=False, num_particles=10, resample_thresho
         cols = pgfa.updates.feature_matrix.get_cols(m, include_singletons=(not ibp))
 
         if update_type == 'g':
-            Z[row_idx] = pgfa.updates.feature_matrix.do_gibbs_update(density, a, b, cols, x, z, V)
+            params = pgfa.updates.feature_matrix.do_gibbs_update(density, a, b, cols, row_idx, data, params)
 
         elif update_type == 'pg':
-            Z[row_idx] = pgfa.updates.feature_matrix.do_particle_gibbs_update(
-                density, a, b, cols, x, z, V,
+            params = pgfa.updates.feature_matrix.do_particle_gibbs_update(
+                density, a, b, cols, row_idx, data, params,
                 annealed=False, num_particles=num_particles, resample_threshold=resample_threshold
             )
 
         elif update_type == 'pga':
-            Z[row_idx] = pgfa.updates.feature_matrix.do_particle_gibbs_update(
-                density, a, b, cols, x, z, V,
+            params = pgfa.updates.feature_matrix.do_particle_gibbs_update(
+                density, a, b, cols, row_idx, data, params,
                 annealed=True, num_particles=num_particles, resample_threshold=resample_threshold
             )
 
         elif update_type == 'rg':
-            Z[row_idx] = pgfa.updates.feature_matrix.do_row_gibbs_update(density, a, b, cols, x, z, V)
+            params = pgfa.updates.feature_matrix.do_row_gibbs_update(density, a, b, cols, row_idx, data, params)
 
         if ibp:
-            V, Z = pgfa.updates.feature_matrix.do_mh_singletons_update(
-                row_idx, density, proposal, alpha, V, X, Z
+            proposal = Proposal(row_idx)
+
+            params = pgfa.updates.feature_matrix.do_mh_singletons_update(
+                density, proposal, data, params
             )
 
-        params.V = V
-
-        params.Z = Z
+    return params
 
 
 #=========================================================================
@@ -268,13 +264,21 @@ def get_params_from_data(data, K=None):
 
     F = np.random.normal(0, 1, size=(K, N))
 
-    S = np.eye(D)
+    S = np.ones(D)
 
-    V = np.random.multivariate_normal(np.zeros(K), np.eye(K), size=D)
+    V = np.random.multivariate_normal(np.zeros(K), np.eye(K), size=D).T
 
     return Parameters(1, 1, F, S, V, Z)
 
 
+@numba.jitclass([
+    ('alpha', numba.float64),
+    ('gamma', numba.float64),
+    ('F', numba.float64[:, :]),
+    ('S', numba.float64[:]),
+    ('V', numba.float64[:, :]),
+    ('Z', numba.int64[:, :])
+])
 class Parameters(object):
     def __init__(self, alpha, gamma, F, S, V, Z):
         self.alpha = alpha
@@ -291,11 +295,11 @@ class Parameters(object):
 
     @property
     def D(self):
-        return self.V.shape[0]
+        return self.V.shape[1]
 
     @property
     def K(self):
-        return self.F.shape[0]
+        return self.Z.shape[1]
 
     @property
     def N(self):
@@ -303,7 +307,7 @@ class Parameters(object):
 
     @property
     def W(self):
-        return self.Z * self.V
+        return self.Z * self.V.T
 
     def copy(self):
         return Parameters(self.alpha, self.gamma, self.F.copy(), self.S.copy(), self.V.copy(), self.Z.copy())
@@ -335,39 +339,73 @@ class Priors(object):
 #=========================================================================
 # Densities and proposals
 #=========================================================================
+@numba.jitclass([
+    ('row_idx', numba.int64),
+])
 class Density(object):
-    def __init__(self, row_idx, s, F):
+    def __init__(self, row_idx):
         self.row_idx = row_idx
 
-        self.s = s
-
-        self.F = F
-
-    def log_p(self, x, z, V):
-        N = self.F.shape[1]
-
+    def log_p(self, data, params):
         log_p = 0
 
-        w = z * V[self.row_idx]
+        w = params.Z[self.row_idx] * params.V[:, self.row_idx]
 
-        for n in range(N):
-            f = self.F[:, n]
+        for n in range(params.N):
+            f = params.F[:, n]
 
             mean = np.sum(w * f)
 
-            log_p += log_normal_likelihood(x[n], mean, self.s)
+            log_p += log_normal_likelihood(
+                data[self.row_idx, n], mean, params.S[self.row_idx]
+            )
 
         return log_p
 
 
-class MultivariateGaussianProposal(object):
-    def __init__(self, mean, covariance):
-        self.mean = mean
+class Proposal(object):
+    def __init__(self, row_idx):
+        self.row_idx = row_idx
 
-        self.covariance = covariance
+    def rvs(self, data, params, num_singletons):
+        m = np.sum(params.Z, axis=0)
 
-    def rvs(self, size=None):
-        return np.random.multivariate_normal(self.mean, self.covariance, size=size)
+        m -= params.Z[self.row_idx]
+
+        non_singletons_idxs = np.atleast_1d(np.squeeze(np.where(m > 0)))
+
+        num_non_singleton = len(non_singletons_idxs)
+
+        K_new = num_non_singleton + num_singletons
+
+        Z_new = np.zeros((params.D, K_new), dtype=np.int64)
+
+        Z_new[:, :num_non_singleton] = params.Z[:, non_singletons_idxs]
+
+        Z_new[self.row_idx, num_non_singleton:] = 1
+
+        V_new = np.zeros((K_new, params.D))
+
+        V_new[:num_non_singleton] = params.V[non_singletons_idxs]
+
+        V_new[num_non_singleton:] = np.random.multivariate_normal(
+            np.zeros(params.D), (1 / params.gamma) * np.eye(params.D), size=num_singletons
+        )
+
+        F_new = np.zeros((K_new, params.N))
+
+        params = Parameters(
+            params.alpha,
+            params.gamma,
+            F_new,
+            params.S,
+            V_new,
+            Z_new
+        )
+
+        params = update_F(data, params)
+
+        return params
 
 
 @numba.njit
