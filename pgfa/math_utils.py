@@ -98,7 +98,7 @@ def ibp_rvs(alpha, N):
 
             Z[n, K:] = 1
 
-    return Z
+    return Z.astype(np.int64)
 
 
 def log_ffa_pdf(a_0, b_0, Z):
