@@ -1,7 +1,20 @@
 import numpy as np
 
 
+def feature_mat_to_dict(Z):
+    Z_dict = {}
+
+    for n in range(Z.shape[0]):
+        Z_dict[n] = set(np.where(Z[n] == 1)[0])
+
+    return Z_dict
+
+
 def get_b_cubed_score(features_true, features_pred):
+    features_true = feature_mat_to_dict(features_true)
+
+    features_pred = feature_mat_to_dict(features_pred)
+
     n = len(features_pred)
 
     p = []
