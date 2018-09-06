@@ -1,6 +1,7 @@
 import itertools
 import numpy as np
 import numba
+import scipy.linalg
 import scipy.stats
 
 from pgfa.math_utils import ffa_rvs, ibp_rvs, log_ffa_pdf, log_ibp_pdf, do_metropolis_hastings_accept_reject
@@ -55,22 +56,31 @@ class NonparametricSparaseFactorAnalysisModel(object):
             log_p += log_ffa_pdf(priors.Z[0], priors.Z[1], Z)
 
         # Common factors prior
-        for k in range(params.K):
-            log_p += scipy.stats.multivariate_normal.logpdf(
-                V[k], np.zeros(params.D), (1 / gamma) * np.eye(params.D)
-            )
+        log_p += np.sum(
+            scipy.stats.multivariate_normal.logpdf(V.T, np.zeros(params.D), (1 / gamma) * np.eye(params.D))
+        )
 
         # Factor loadings prior
-        for n in range(params.N):
-            log_p += scipy.stats.multivariate_normal.logpdf(F[:, n], np.zeros(params.K), np.eye(params.K))
+        log_p += np.sum(
+            scipy.stats.multivariate_normal.logpdf(F.T, np.zeros(params.K), np.eye(params.K))
+        )
 
         # Noise covariance
-        for d in range(params.D):
-            log_p += scipy.stats.gamma.logpdf(S[d], priors.S[0], scale=(1 / priors.S[1]))
+        log_p += np.sum(
+            scipy.stats.gamma.logpdf(S, priors.S[0], scale=(1 / priors.S[1]))
+        )
 
         log_p += scipy.stats.gamma.logpdf(1 / gamma, priors.gamma[0], scale=(1 / priors.gamma[1]))
 
         return log_p
+
+    @property
+    def rmse(self):
+        X_true = self.data
+
+        X_pred = self.params.W @ self.params.F
+
+        return np.sqrt(np.mean((X_true - X_pred)**2))
 
     def log_predictive_pdf(self, data):
         S = self.params.S
@@ -85,6 +95,7 @@ class NonparametricSparaseFactorAnalysisModel(object):
 
         except np.linalg.LinAlgError as e:
             print(W)
+            print(S)
             raise e
 
         return log_p
@@ -116,9 +127,9 @@ class NonparametricSparaseFactorAnalysisModel(object):
 # Updates
 #=========================================================================
 def update_alpha(params, priors):
-    a = params.K + priors.alpha[0]
+    a = priors.alpha[0] + params.K
 
-    b = np.sum(1 / np.arange(1, params.D + 1)) + priors.alpha[0]
+    b = priors.alpha[1] + np.sum(1 / np.arange(1, params.D + 1))
 
     params.alpha = np.random.gamma(a, 1 / b)
 
@@ -126,9 +137,9 @@ def update_alpha(params, priors):
 
 
 def update_gamma(params, priors):
-    a = priors.gamma[0] + 0.5 * np.sum(params.Z)
+    a = priors.gamma[0] + 0.5 * params.K * params.D  # np.sum(params.Z)
 
-    b = priors.gamma[1] + 0.5 * np.sum(np.square(params.W))
+    b = priors.gamma[1] + 0.5 * np.sum(np.square(params.V))
 
     params.gamma = np.random.gamma(a, 1 / b)
 
@@ -140,17 +151,19 @@ def update_F(data, params):
     W = params.W
     X = data
 
-    A = np.eye(params.K) + W.T @ S @ W
+    if params.K == 0:
+        params.F = np.zeros((params.K, params.N))
 
-    b = np.linalg.inv(A) @ W.T @ S @ X
+    else:
+        A = np.eye(params.K) + W.T @ S @ W
 
-    cov = np.linalg.inv(A)
+        A_chol = scipy.linalg.cho_factor(A, check_finite=False)
 
-    cov_chol = np.linalg.cholesky(cov)
+        b = scipy.linalg.cho_solve(A_chol, W.T @ S @ X, check_finite=False)
 
-    eps = np.random.normal(0, 1, size=(params.K, params.N))
+        eps = np.random.normal(0, 1, size=(params.K, params.N))
 
-    params.F = b + cov_chol @ eps
+        params.F = b + scipy.linalg.solve_triangular(A_chol[0], eps, check_finite=False, lower=A_chol[1])
 
     return params
 
@@ -162,7 +175,7 @@ def update_S(data, params, priors):
     W = params.W
     X = data
 
-    R = X - np.dot(W, F)
+    R = X - W @ F
 
     a = priors.S[0] + 0.5 * params.N
 
@@ -176,6 +189,7 @@ def update_S(data, params, priors):
     return params
 
 
+@numba.jit
 def update_V(data, params):
     gamma = params.gamma
     F = params.F
@@ -186,19 +200,19 @@ def update_V(data, params):
 
     FF = np.square(F).sum(axis=1)
 
-    R = X - np.dot(Z * V.T, F)
+    R = X - (Z * V) @ F
 
     for d in range(params.D):
         for k in range(params.K):
-            rk = R[d] + Z[d, k] * V[k, d] * F[k]
+            rk = R[d] + Z[d, k] * V[d, k] * F[k]
 
             prec = gamma + Z[d, k] * S[d] * FF[k]
 
-            mu = Z[d, k] * (S[d] / prec) * np.dot(F[k], rk)
+            mu = Z[d, k] * (S[d] / prec) * (F[k] @ rk)
 
-            V[k, d] = np.random.normal(mu, 1 / prec)
+            V[d, k] = np.random.normal(mu, 1 / np.sqrt(prec))
 
-            R[d] = rk - Z[d, k] * V[k, d] * F[k]
+            R[d] = rk - Z[d, k] * V[d, k] * F[k]
 
     params.V = V
 
@@ -238,6 +252,8 @@ def update_Z(data, params, priors, ibp=False, num_particles=10, resample_thresho
             params = pgfa.updates.feature_matrix.do_row_gibbs_update(density, a, b, cols, row_idx, data, params)
 
         if ibp:
+            #             density = CollapsedDensity(row_idx)
+
             proposal = Proposal(row_idx)
 
             params = pgfa.updates.feature_matrix.do_mh_singletons_update(
@@ -266,7 +282,11 @@ def get_params_from_data(data, K=None):
 
     S = np.ones(D)
 
-    V = np.random.multivariate_normal(np.zeros(K), np.eye(K), size=D).T
+    if K == 0:
+        V = np.zeros((D, K))
+
+    else:
+        V = np.random.multivariate_normal(np.zeros(K), np.eye(K), size=D)
 
     return Parameters(1, 1, F, S, V, Z)
 
@@ -295,7 +315,7 @@ class Parameters(object):
 
     @property
     def D(self):
-        return self.V.shape[1]
+        return self.Z.shape[0]
 
     @property
     def K(self):
@@ -307,7 +327,7 @@ class Parameters(object):
 
     @property
     def W(self):
-        return self.Z * self.V.T
+        return self.Z * self.V
 
     def copy(self):
         return Parameters(self.alpha, self.gamma, self.F.copy(), self.S.copy(), self.V.copy(), self.Z.copy())
@@ -349,7 +369,7 @@ class Density(object):
     def log_p(self, data, params):
         log_p = 0
 
-        w = params.Z[self.row_idx] * params.V[:, self.row_idx]
+        w = params.Z[self.row_idx] * params.V[self.row_idx]
 
         for n in range(params.N):
             f = params.F[:, n]
@@ -359,6 +379,50 @@ class Density(object):
             log_p += log_normal_likelihood(
                 data[self.row_idx, n], mean, params.S[self.row_idx]
             )
+
+        return log_p
+
+
+@numba.njit
+def log_normal_likelihood(x, mean, precision):
+    return -0.5 * precision * (x - mean)**2
+
+
+class CollapsedDensity(object):
+    def __init__(self, row_idx):
+        self.row_idx = row_idx
+
+    def log_p(self, data, params):
+        m = np.sum(params.Z, axis=0)
+
+        m -= params.Z[self.row_idx]
+
+        non_singletons_idxs = np.atleast_1d(np.squeeze(np.where(m > 0)))
+
+        singletons_idxs = np.atleast_1d(np.squeeze(np.where(m == 0)))
+
+        k = len(singletons_idxs)
+
+        if k == 0:
+            return 0
+
+        w = params.Z[self.row_idx, non_singletons_idxs] * params.V[self.row_idx, non_singletons_idxs]
+
+        r = data[self.row_idx] - w @ params.F[non_singletons_idxs]
+
+        s = params.S[self.row_idx]
+
+        v = params.V[self.row_idx, singletons_idxs]
+
+        M = s * v @ v.T + np.eye(k)
+
+        m = s * np.linalg.solve(M, v)[:, np.newaxis] * r[np.newaxis, :]
+
+        m = s * np.linalg.solve(M, v) @ r
+
+        log_p = 0
+        log_p -= 0.5 * params.N * np.log(np.linalg.det(M))
+        log_p += 0.5 * np.sum(m.T @ M @ m)
 
         return log_p
 
@@ -384,13 +448,13 @@ class Proposal(object):
 
         Z_new[self.row_idx, num_non_singleton:] = 1
 
-        V_new = np.zeros((K_new, params.D))
+        V_new = np.zeros((params.D, K_new))
 
-        V_new[:num_non_singleton] = params.V[non_singletons_idxs]
+        V_new[:, :num_non_singleton] = params.V[:, non_singletons_idxs]
 
-        V_new[num_non_singleton:] = np.random.multivariate_normal(
+        V_new[:, num_non_singleton:] = np.random.multivariate_normal(
             np.zeros(params.D), (1 / params.gamma) * np.eye(params.D), size=num_singletons
-        )
+        ).T
 
         F_new = np.zeros((K_new, params.N))
 
@@ -407,15 +471,11 @@ class Proposal(object):
 
         return params
 
-
-@numba.njit
-def log_normal_likelihood(x, mean, precision):
-    return -0.5 * precision * (x - mean)**2
-
-
 #=========================================================================
 # Benchmark utils
 #=========================================================================
+
+
 def get_rmse(data, params):
     X_true = data
 
