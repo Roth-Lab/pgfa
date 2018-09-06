@@ -10,7 +10,7 @@ def do_mh_singletons_update(density, proposal, data, params):
     log_p_old = density.log_p(data, params)
 
     # New state
-    num_new_singletons = np.random.poisson(params.alpha / params.N)
+    num_new_singletons = np.random.poisson(params.alpha / params.Z.shape[0])
 
     params_new = proposal.rvs(data, params, num_new_singletons)
 
