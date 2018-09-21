@@ -3,6 +3,11 @@ import numpy as np
 
 
 @numba.njit
+def bernoulli_rvs(p):
+    return discrete_rvs(np.array([1 - p, p]))
+
+
+@numba.njit
 def discrete_rvs(p):
     p = p / np.sum(p)
     P = np.cumsum(p)
@@ -122,6 +127,9 @@ def log_ffa_pdf(a_0, b_0, Z):
 
 def log_ibp_pdf(alpha, Z):
     K = Z.shape[1]
+
+    if K == 0:
+        return 0
 
     N = Z.shape[0]
 
