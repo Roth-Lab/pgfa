@@ -1,9 +1,8 @@
 import numba
 import numpy as np
-import scipy.linalg
 import scipy.stats
 
-from pgfa.math_utils import cholesky_log_det, cholesky_update, ffa_rvs, ibp_rvs, log_ffa_pdf, log_ibp_pdf
+from pgfa.math_utils import ffa_rvs, ibp_rvs, log_ffa_pdf, log_ibp_pdf
 
 import pgfa.updates.feature_matrix
 
@@ -135,13 +134,15 @@ class LinearGaussianModel(object):
             update_type=update_type
         )
 
-        self.params = update_alpha(self.params, self.priors)
-
-        self.params = update_V(self.data, self.params)
+        if self.params.K > 0:
+            self.params = update_V(self.data, self.params)
 
         self.params = update_tau_a(self.params, self.priors)
 
         self.params = update_tau_x(self.data, self.params, self.priors)
+
+        if self.ibp:
+            self.params = update_alpha(self.params, self.priors)
 
 
 #=========================================================================
@@ -162,9 +163,6 @@ def update_V(data, params):
     t_x = params.tau_x
     Z = params.Z
     X = data
-
-    if params.K == 0:
-        return
 
     M = np.linalg.inv(Z.T @ Z + (t_a / t_x) * np.eye(params.K))
 
@@ -217,7 +215,7 @@ def update_Z(data, params, ibp=False, num_particles=100, resample_threshold=0.5,
 
         a = a_0 + m
 
-        b = b_0 + (params.N - 1 - m)
+        b = b_0 + (params.N - m)
 
         cols = pgfa.updates.feature_matrix.get_cols(m, include_singletons=(not ibp))
 
@@ -261,7 +259,7 @@ def update_Z_collapsed(data, params, ibp=False, num_particles=10, resample_thres
 
         a = a_0 + m
 
-        b = b_0 + (params.N - 1 - m)
+        b = b_0 + (params.N - m)
 
         cols = pgfa.updates.feature_matrix.get_cols(m, include_singletons=(not ibp))
 
