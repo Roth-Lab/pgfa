@@ -17,21 +17,23 @@ def main():
     K = 4
     N = 100
 
-    data, _, Z = simulate_data(3, D, N, K=K, s_a=0.01, s_x=10)
+    data, _, Z = simulate_data(3, D, N, K=K, s_a=0.01, s_x=100)
 
-    init_params = pgfa.models.linear_gaussian.get_params_from_data(data, K=1)
+    model = pgfa.models.linear_gaussian.LinearGaussianModel(data, K=None)
 
-    print(np.sum(Z, axis=0))
+    model.params.V = model.params.V[:1]
 
-    params = init_params.copy()
+    model.params.Z = np.ones((N, 1), dtype=np.int64)
 
-#     model = pgfa.models.linear_gaussian.LinearGaussianModel(data, K=None, params=params)
+#     model.params.Z = np.random.randint(0, 2, size=(N, 1))
 
-    model = pgfa.models.linear_gaussian.CollapsedLinearGaussianModel(data, K=None, params=params)
+#     model = pgfa.models.linear_gaussian.CollapsedLinearGaussianModel(data, K=K, params=params)
 
-    update = 'pg'
+    update = 'rg'
 
     print(update)
+
+    print(np.sum(Z, axis=0))
 
     for i in range(num_iters):
         if i % 10 == 0:
@@ -50,7 +52,7 @@ def main():
 
             print(np.sum(model.params.Z, axis=0))
 
-        model.update(update_type=update)
+        model.update(update_type=update, num_particles=20)
 
 
 def simulate_data(alpha, D, N, K=None, s_a=1, s_x=1):

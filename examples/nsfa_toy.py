@@ -19,9 +19,9 @@ def main():
 
     model = NSFA()
 
-    params = model.get_init_params(data, params_true.K)
+    params = model.get_init_params(data, 3)
 
-    priors = model.get_priors()
+    priors = model.get_priors(ibp=True)
 
     priors.gamma = np.array([1, 1])
     priors.U = np.array([0.1, 0.1])
@@ -33,10 +33,10 @@ def main():
 #     params.V = params_true.V
 
     for i in range(num_iters):
-        if i % 1000 == 0:
+        if i % 1 == 0:
             print(
                 i,
-                model.log_predictive_pdf(data, params),
+                params.K,
                 model.log_predictive_pdf(data, params)
             )
 
@@ -50,12 +50,12 @@ def main():
 
             print()
 
-        params.gamma = model._update_gamma(params, priors)
-        params.F = model._update_F(data, params)
-        params.S = model._update_S(data, params, priors)
-        params.U = model._update_U(data, params, priors)
-        params.U = model._update_U_row(data, params, priors)
-        params.V = model._update_V(data, params)
+        model._update_gamma(params, priors)
+        model._update_F(data, params)
+        model._update_S(data, params, priors)
+        model._update_U(data, params, priors)
+#         model._update_U_row(data, params, priors)
+        model._update_V(data, params)
 
     print(params.gamma)
 
