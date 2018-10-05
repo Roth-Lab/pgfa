@@ -4,8 +4,39 @@ import numpy as np
 
 from pgfa.math_utils import discrete_rvs, log_normalize
 
+from .utils import get_rows
 
-def do_restricted_row_gibbs_update(density, a, b, cols, row_idx, data, params, max_cols=1):
+
+class RowGibbsUpdater(object):
+    def __init__(self, max_cols=None):
+        self.max_cols = max_cols
+
+    def update(self, data, dist, feat_alloc_prior, params):
+        for row_idx in get_rows(params.N):
+            cols = feat_alloc_prior.get_update_cols(row_idx, params.Z)
+
+            feat_probs = feat_alloc_prior.get_feature_probs(row_idx, params.Z)
+
+            if self.max_cols is None:
+                max_cols = len(cols)
+
+            else:
+                max_cols = self.max_cols
+
+            params = do_row_gibbs_update(
+                data,
+                dist,
+                cols,
+                feat_probs,
+                params,
+                row_idx,
+                max_cols=max_cols
+            )
+
+        return params
+
+
+def do_row_gibbs_update(data, dist, cols, feat_probs, params, row_idx, max_cols=1):
     K = len(cols)
 
     if K > max_cols:
@@ -19,14 +50,14 @@ def do_restricted_row_gibbs_update(density, a, b, cols, row_idx, data, params, m
 
     Zs = np.array(Zs, dtype=np.int)
 
-    return _do_row_gibbs_update(density, a, b, cols, row_idx, data, params, Zs)
+    return _do_row_gibbs_update(data, dist, cols, feat_probs, params, row_idx, Zs)
 
 
 @numba.jit
-def _do_row_gibbs_update(density, a, b, cols, row_idx, data, params, Zs):
-    log_a = np.log(a[cols])
+def _do_row_gibbs_update(data, dist, cols, feat_probs, params, row_idx, Zs):
+    log_p1 = np.log(feat_probs)
 
-    log_b = np.log(b[cols])
+    log_p0 = np.log(1 - feat_probs)
 
     log_p = np.zeros(len(Zs))
 
@@ -38,7 +69,7 @@ def _do_row_gibbs_update(density, a, b, cols, row_idx, data, params, Zs):
 
         params.Z[row_idx] = z
 
-        log_p[idx] = np.sum(Zs[idx] * log_a) + np.sum((1 - Zs[idx]) * log_b) + density.log_p(data, params)
+        log_p[idx] = np.sum(Zs[idx] * log_p1) + np.sum((1 - Zs[idx]) * log_p0) + dist.log_p_row(data, params, row_idx)
 
     log_p = log_normalize(log_p)
 

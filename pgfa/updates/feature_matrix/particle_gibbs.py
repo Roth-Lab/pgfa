@@ -3,16 +3,46 @@ import numpy as np
 
 from pgfa.math_utils import discrete_rvs, log_normalize, log_sum_exp
 
+from .utils import get_rows
+
+
+class ParticleGibbsUpdater(object):
+    def __init__(self, annealed=False, num_particles=10, resample_threshold=0.5):
+        self.annealed = annealed
+
+        self.num_particles = num_particles
+
+        self.resample_threshold = resample_threshold
+
+    def update(self, data, dist, feat_alloc_prior, params):
+        for row_idx in get_rows(params.N):
+            cols = feat_alloc_prior.get_update_cols(row_idx, params.Z)
+
+            feat_probs = feat_alloc_prior.get_feature_probs(row_idx, params.Z)
+
+            params = do_particle_gibbs_update(
+                cols,
+                data,
+                dist,
+                feat_probs,
+                params,
+                row_idx,
+                annealed=self.annealed,
+                num_particles=self.num_particles,
+                resample_threshold=self.resample_threshold
+            )
+
+        return params
+
 
 @numba.jit
 def do_particle_gibbs_update(
-        density,
-        a,
-        b,
         cols,
-        row_idx,
         data,
+        dist,
+        feat_probs,
         params,
+        row_idx,
         annealed=True,
         num_particles=10,
         resample_threshold=0.5):
@@ -52,12 +82,12 @@ def do_particle_gibbs_update(
 
             if annealed:
                 particles[i, t], log_p[i], log_norm = _propose_annealed(
-                    cols[:(t + 1)], row_idx, density, a, b, data, params, z_test, T, idx=idx
+                    cols[:(t + 1)], data, dist, feat_probs, params, row_idx, z_test, T, idx=idx
                 )
 
             else:
                 particles[i, t], log_p[i], log_norm = _propose(
-                    cols[:(t + 1)], row_idx, density, a, b, data, params, z_test, idx=idx
+                    cols[:(t + 1)], data, dist, feat_probs, params, row_idx, z_test, idx=idx
                 )
 
             log_w = log_norm - log_p_old[i]
@@ -78,28 +108,34 @@ def do_particle_gibbs_update(
 
 
 @numba.jit
-def _log_target_pdf_annealed(cols, row_idx, density, a, b, data, params, z, T):
+def _log_target_pdf_annealed(cols, data, dist, feat_probs, params, row_idx, z, T):
     params.Z[row_idx] = z
+
     t = len(cols)
+
     log_p = 0
-    log_p += np.sum(z[cols] * np.log(a[cols]))
-    log_p += np.sum((1 - z[cols]) * np.log(b[cols]))
+
+    log_p += np.sum(z[cols] * np.log(feat_probs[cols]))
+
+    log_p += np.sum((1 - z[cols]) * np.log(1 - feat_probs[cols]))
+
     if t > 1:
-        log_p += ((t - 1) / (T - 1)) * density.log_p(data, params)
+        log_p += ((t - 1) / (T - 1)) * dist.log_p_row(data, params, row_idx)
+
     return log_p
 
 
 @numba.jit
-def _propose_annealed(cols, row_idx, density, a, b, data, params, z, T, idx=-1):
+def _propose_annealed(cols, data, dist, feat_probs, params, row_idx, z, T, idx=-1):
     log_p = np.zeros(2)
 
     z[cols[-1]] = 0
 
-    log_p[0] = _log_target_pdf_annealed(cols, row_idx, density, a, b, data, params, z, T)
+    log_p[0] = _log_target_pdf_annealed(cols, data, dist, feat_probs, params, row_idx, z, T)
 
     z[cols[-1]] = 1
 
-    log_p[1] = _log_target_pdf_annealed(cols, row_idx, density, a, b, data, params, z, T)
+    log_p[1] = _log_target_pdf_annealed(cols, data, dist, feat_probs, params, row_idx, z, T)
 
     log_norm = log_sum_exp(log_p)
 
@@ -116,26 +152,31 @@ def _propose_annealed(cols, row_idx, density, a, b, data, params, z, T, idx=-1):
 
 
 @numba.jit
-def _log_target_pdf(cols, row_idx, density, a, b, data, params, z):
+def _log_target_pdf(cols, data, dist, feat_probs, params, row_idx, z):
     params.Z[row_idx] = z
+
     log_p = 0
-    log_p += np.sum(z[cols] * np.log(a[cols]))
-    log_p += np.sum((1 - z[cols]) * np.log(b[cols]))
-    log_p += density.log_p(data, params)
+
+    log_p += np.sum(z[cols] * np.log(feat_probs[cols]))
+
+    log_p += np.sum((1 - z[cols]) * np.log(1 - feat_probs[cols]))
+
+    log_p += dist.log_p_row(data, params, row_idx)
+
     return log_p
 
 
 @numba.jit
-def _propose(cols, row_idx, density, a, b, data, params, z, idx=-1):
+def _propose(cols, data, dist, feat_probs, params, row_idx, z, idx=-1):
     log_p = np.zeros(2)
 
     z[cols[-1]] = 0
 
-    log_p[0] = _log_target_pdf(cols, row_idx, density, a, b, data, params, z)
+    log_p[0] = _log_target_pdf(cols, data, dist, feat_probs, params, row_idx, z)
 
     z[cols[-1]] = 1
 
-    log_p[1] = _log_target_pdf(cols, row_idx, density, a, b, data, params, z)
+    log_p[1] = _log_target_pdf(cols, data, dist, feat_probs, params, row_idx, z)
 
     log_norm = log_sum_exp(log_p)
 

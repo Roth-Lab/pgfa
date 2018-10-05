@@ -2,19 +2,19 @@ import math
 import numba
 import numpy as np
 
-from pgfa.math_utils import ffa_rvs, ibp_rvs
-
-import pgfa.updates.feature_matrix
-
 
 class PyCloneFeatureAllocationModel(object):
-    def __init__(self, data, K=None, params=None, priors=None):
+    def __init__(self, data, feat_alloc_prior, feat_alloc_updater, params=None, priors=None):
         self.data = data
 
-        self.ibp = (K is None)
+        self.feat_alloc_updater = feat_alloc_updater
+
+        self.feat_alloc_prior = feat_alloc_prior
+
+        self.data_dist = DataDistribution()
 
         if params is None:
-            params = get_params_from_data(data, K=K)
+            params = get_params_from_data(data, feat_alloc_prior)
 
         self.params = params
 
@@ -27,17 +27,9 @@ class PyCloneFeatureAllocationModel(object):
     def log_p(self):
         return 0
 
-    def update(self, num_particles=10, resample_threshold=0.5, update_type='g'):
-#         self.params = update_eta(self.data, self.params)
-
-        self.params = update_Z(
-            self.data,
-            self.params,
-            self.priors,
-            ibp=self.ibp,
-            num_particles=num_particles,
-            resample_threshold=resample_threshold,
-            update_type=update_type
+    def update(self):
+        self.params = self.feat_alloc_updater.update(
+            self.data, self.data_dist, self.feat_alloc_prior, self.params
         )
 
 
@@ -78,94 +70,52 @@ def update_alpha(params, priors):
 #                 params_new.eta[d, k] = params_old.eta[d, k]
 #
 #     return params_new
-
-def update_eta(data, params):
-    params_old = params
-
-    params_new = params.copy()
-
-    density = FullDensity()
-
-    for d in range(params.D):
-        params_new.eta[d] = np.random.dirichlet(params_old.eta[d] + 1e-6)
-
-        log_p_old = density.log_p(data, params_old)
-
-        log_p_new = density.log_p(data, params_new)
-
-        u = np.random.rand()
-
-        if np.log(u) <= (log_p_new - log_p_old):
-            params_old.eta[d] = params_new.eta[d]
-
-        else:
-            params_new.eta[d] = params_old.eta[d]
-
-    return params_new
-
-
-def update_Z(data, params, priors, ibp=False, num_particles=10, resample_threshold=0.5, update_type='g'):
-    for row_idx in pgfa.updates.feature_matrix.get_rows(params.N):
-        density = Density(row_idx)
-
-        m = np.sum(params.Z, axis=0)
-
-        m -= params.Z[row_idx]
-
-        if ibp:
-            a = m
-
-            b = (params.N - m)
-
-        else:
-            a = priors.Z[1] + m
-
-            b = priors.Z[0] + (params.N - 1 - m)
-
-        cols = pgfa.updates.feature_matrix.get_cols(m, include_singletons=(not ibp))
-
-        if update_type == 'g':
-            params = pgfa.updates.feature_matrix.do_gibbs_update(density, a, b, cols, row_idx, data, params)
-
-        elif update_type == 'pg':
-            params = pgfa.updates.feature_matrix.do_particle_gibbs_update(
-                density, a, b, cols, row_idx, data, params,
-                annealed=False, num_particles=num_particles, resample_threshold=resample_threshold
-            )
-
-        elif update_type == 'pga':
-            params = pgfa.updates.feature_matrix.do_particle_gibbs_update(
-                density, a, b, cols, row_idx, data, params,
-                annealed=True, num_particles=num_particles, resample_threshold=resample_threshold
-            )
-
-        elif update_type == 'rg':
-            params = pgfa.updates.feature_matrix.do_row_gibbs_update(density, a, b, cols, row_idx, data, params)
-
-        if ibp:
-            proposal = Proposal(row_idx)
-
-            params = pgfa.updates.feature_matrix.do_mh_singletons_update(
-                density, proposal, data, params
-            )
-
-    return params
+#
+# def update_eta(data, params):
+#     params_old = params
+#
+#     params_new = params.copy()
+#
+#     density = FullDensity()
+#
+#     for d in range(params.D):
+#         params_new.eta[d] = np.random.dirichlet(params_old.eta[d] + 1e-6)
+#
+#         log_p_old = density.log_p(data, params_old)
+#
+#         log_p_new = density.log_p(data, params_new)
+#
+#         u = np.random.rand()
+#
+#         if np.log(u) <= (log_p_new - log_p_old):
+#             params_old.eta[d] = params_new.eta[d]
+#
+#         else:
+#             params_new.eta[d] = params_old.eta[d]
+#
+#     return params_new
 
 
 #=========================================================================
 # Densities and proposals
 #=========================================================================
-@numba.jitclass([
-    ('row_idx', numba.int64)
-])
-class Density(object):
-    def __init__(self, row_idx):
-        self.row_idx = row_idx
+@numba.jitclass([])
+class DataDistribution(object):
+    def __init__(self):
+        pass
 
     def log_p(self, data, params):
+        log_p = 0
+
+        for row_idx in range(params.N):
+            log_p += self.log_p_row(data, params, row_idx)
+
+        return log_p
+
+    def log_p_row(self, data, params, row_idx):
         phi = params.phi
-        x = data[self.row_idx]
-        z = params.Z[self.row_idx].astype(np.float64)
+        x = data[row_idx]
+        z = params.Z[row_idx].astype(np.float64)
 
         log_p = 0
 
@@ -175,30 +125,6 @@ class Density(object):
             f = min(1 - 1e-6, max(1e-6, f))
 
             log_p += binomial_log_likelihood(x[d, 0], x[d, 1], f)
-
-        return log_p
-
-
-@numba.jitclass([
-])
-class FullDensity(object):
-    def __init__(self):
-        pass
-
-    def log_p(self, data, params):
-        phi = params.phi
-        X = data
-        Z = params.Z
-
-        log_p = 0
-
-        for n in range(params.N):
-            for d in range(params.D):
-                f = np.sum(Z[n] * phi[d])
-
-                f = min(1 - 1e-6, max(1e-6, f))
-
-                log_p += binomial_log_likelihood(X[n, d, 0], X[n, d, 1], f)
 
         return log_p
 
@@ -283,15 +209,11 @@ class Proposal(object):
 #=========================================================================
 # Container classes
 #=========================================================================
-def get_params_from_data(data, K=None):
+def get_params_from_data(data, feat_alloc_prior):
     D = data.shape[1]
     N = data.shape[0]
 
-    if K is None:
-        Z = ibp_rvs(1, N)
-
-    else:
-        Z = ffa_rvs(1, 1, K, N)
+    Z = feat_alloc_prior.rvs(N)
 
     K = Z.shape[1]
 
