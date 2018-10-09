@@ -51,6 +51,8 @@ def do_particle_gibbs_update(
 
     log_p = np.zeros(num_particles)
 
+    log_p_old = np.zeros(num_particles)
+
     log_W = np.zeros(num_particles)
 
     particles = np.zeros((num_particles, T), dtype=np.int64)
@@ -66,7 +68,7 @@ def do_particle_gibbs_update(
 
         log_W = log_normalize(log_W)
 
-        log_p_old = log_p
+        log_p_old[:] = log_p[:]
 
         if t > 0:
             log_W, particles = _resample(log_W, particles, conditional=True, threshold=resample_threshold)
