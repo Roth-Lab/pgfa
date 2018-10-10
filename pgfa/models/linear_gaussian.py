@@ -2,10 +2,6 @@ import numba
 import numpy as np
 import scipy.stats
 
-from pgfa.math_utils import ffa_rvs, ibp_rvs, log_ffa_pdf, log_ibp_pdf
-
-import pgfa.updates.feature_matrix
-
 
 class CollapsedLinearGaussianModel(object):
     def __init__(self, data, K=None, params=None, priors=None):
@@ -19,7 +15,7 @@ class CollapsedLinearGaussianModel(object):
         self.params = params
 
         if priors is None:
-            priors = LinearGaussianPriors()
+            priors = Priors()
 
         self.priors = priors
 
@@ -33,15 +29,8 @@ class CollapsedLinearGaussianModel(object):
         """
         pass
 
-    def update(self, num_particles=10, resample_threshold=0.5, update_type='g'):
-        self.params = update_Z_collapsed(
-            self.data,
-            self.params,
-            ibp=self.ibp,
-            num_particles=num_particles,
-            resample_threshold=resample_threshold,
-            update_type=update_type
-        )
+    def update(self):
+        self.params = self.feat_alloc_updater.update(self.data, self.data_dist, self.feat_alloc_prior, self.params)
 
         self.params = update_alpha(self.params, self.priors)
 
@@ -53,18 +42,22 @@ class CollapsedLinearGaussianModel(object):
 
 
 class LinearGaussianModel(object):
-    def __init__(self, data, K=None, params=None, priors=None):
+    def __init__(self, data, feat_alloc_prior, feat_alloc_updater, params=None, priors=None):
         self.data = data
 
-        self.ibp = (K is None)
+        self.feat_alloc_updater = feat_alloc_updater
+
+        self.feat_alloc_prior = feat_alloc_prior
+
+        self.data_dist = DataDistribution()
 
         if params is None:
-            params = get_params_from_data(data, K=K)
+            params = get_params_from_data(data, feat_alloc_prior)
 
         self.params = params
 
         if priors is None:
-            priors = LinearGaussianPriors()
+            priors = Priors()
 
         self.priors = priors
 
@@ -72,7 +65,6 @@ class LinearGaussianModel(object):
     def log_p(self):
         """ Log of joint pdf.
         """
-        alpha = self.params.alpha
         t_a = self.params.tau_a
         t_x = self.params.tau_x
         V = self.params.V
@@ -85,6 +77,9 @@ class LinearGaussianModel(object):
 
         log_p = 0
 
+        # Binary matrix prior
+        log_p += self.feat_alloc_prior.log_p(self.params.Z)
+
         # Gamma prior on $\tau_{a}$
         a = self.priors.tau_a[0]
         b = self.priors.tau_a[1]
@@ -94,13 +89,6 @@ class LinearGaussianModel(object):
         a = self.priors.tau_x[0]
         b = self.priors.tau_x[1]
         log_p += scipy.stats.gamma.logpdf(t_x, a, scale=(1 / b))
-
-        # Prior on Z
-        if self.ibp:
-            log_p += log_ibp_pdf(self.params.alpha, self.params.Z)
-
-        else:
-            log_p += log_ffa_pdf(alpha / K, 1, Z)
 
         # Prior on V
         log_p += scipy.stats.matrix_normal.logpdf(
@@ -124,15 +112,8 @@ class LinearGaussianModel(object):
         """
         pass
 
-    def update(self, num_particles=10, resample_threshold=0.5, update_type='g'):
-        self.params = update_Z(
-            self.data,
-            self.params,
-            ibp=self.ibp,
-            num_particles=num_particles,
-            resample_threshold=resample_threshold,
-            update_type=update_type
-        )
+    def update(self):
+        self.params = self.feat_alloc_updater.update(self.data, self.data_dist, self.feat_alloc_prior, self.params)
 
         if self.params.K > 0:
             self.params = update_V(self.data, self.params)
@@ -140,9 +121,6 @@ class LinearGaussianModel(object):
         self.params = update_tau_a(self.params, self.priors)
 
         self.params = update_tau_x(self.data, self.params, self.priors)
-
-        if self.ibp:
-            self.params = update_alpha(self.params, self.priors)
 
 
 #=========================================================================
@@ -203,137 +181,30 @@ def update_tau_x(data, params, priors):
     return params
 
 
-def update_Z(data, params, ibp=False, num_particles=100, resample_threshold=0.5, update_type='g'):
-    for row_idx in pgfa.updates.feature_matrix.get_rows(params.N):
-        a_0, b_0 = _get_feature_priors(params.alpha, params.K, ibp)
-
-        density = LinearGaussianDensity(row_idx)
-
-        m = np.sum(params.Z, axis=0)
-
-        m -= params.Z[row_idx]
-
-        a = a_0 + m
-
-        b = b_0 + (params.N - m)
-
-        cols = pgfa.updates.feature_matrix.get_cols(m, include_singletons=(not ibp))
-
-        if update_type == 'g':
-            params = pgfa.updates.feature_matrix.do_gibbs_update(density, a, b, cols, row_idx, data, params)
-
-        elif update_type == 'pg':
-            params = pgfa.updates.feature_matrix.do_particle_gibbs_update(
-                density, a, b, cols, row_idx, data, params,
-                annealed=False, num_particles=num_particles, resample_threshold=resample_threshold
-            )
-
-        elif update_type == 'pga':
-            params = pgfa.updates.feature_matrix.do_particle_gibbs_update(
-                density, a, b, cols, row_idx, data, params,
-                annealed=True, num_particles=num_particles, resample_threshold=resample_threshold
-            )
-
-        elif update_type == 'rg':
-            params = pgfa.updates.feature_matrix.do_row_gibbs_update(density, a, b, cols, row_idx, data, params)
-
-        if ibp:
-            proposal = UncollapsedProposal(row_idx)
-
-            params = pgfa.updates.feature_matrix.do_mh_singletons_update(
-                density, proposal, data, params
-            )
-
-    return params
-
-
-def update_Z_collapsed(data, params, ibp=False, num_particles=10, resample_threshold=0.5, update_type='g'):
-    a_0, b_0 = _get_feature_priors(params.alpha, params.K, ibp)
-
-    for row_idx in pgfa.updates.feature_matrix.get_rows(params.N):
-        density = LinearGaussianMarginalDensity(row_idx)
-
-        m = np.sum(params.Z, axis=0)
-
-        m -= params.Z[row_idx]
-
-        a = a_0 + m
-
-        b = b_0 + (params.N - m)
-
-        cols = pgfa.updates.feature_matrix.get_cols(m, include_singletons=(not ibp))
-
-        if update_type == 'g':
-            params = pgfa.updates.feature_matrix.do_gibbs_update(density, a, b, cols, row_idx, data, params)
-
-        elif update_type == 'pg':
-            params = pgfa.updates.feature_matrix.do_particle_gibbs_update(
-                density, a, b, cols, row_idx, data, params,
-                annealed=False, num_particles=num_particles, resample_threshold=resample_threshold
-            )
-
-        elif update_type == 'pga':
-            params = pgfa.updates.feature_matrix.do_particle_gibbs_update(
-                density, a, b, cols, row_idx, data, params,
-                annealed=True, num_particles=num_particles, resample_threshold=resample_threshold
-            )
-
-        elif update_type == 'rg':
-            params = pgfa.updates.feature_matrix.do_row_gibbs_update(density, a, b, cols, row_idx, data, params)
-
-        if ibp:
-            proposal = CollapsedProposal(row_idx)
-
-            params = pgfa.updates.feature_matrix.do_mh_singletons_update(
-                density, proposal, data, params
-            )
-
-    return params
-
-
-def _get_feature_priors(alpha, K, ibp):
-    if ibp:
-        a_0 = 0
-        b_0 = 0
-
-    else:
-        a_0 = alpha / K
-        b_0 = 1
-
-    return a_0, b_0
-
-
 #=========================================================================
 # Container classes
 #=========================================================================
-def get_params_from_data(data, K=None):
+def get_params_from_data(data, feat_alloc_prior):
     D = data.shape[1]
     N = data.shape[0]
 
-    if K is None:
-        Z = ibp_rvs(1, N)
-
-    else:
-        Z = ffa_rvs(1, 1, K, N)
+    Z = feat_alloc_prior.rvs(N)
 
     K = Z.shape[1]
 
     V = np.random.multivariate_normal(np.zeros(D), np.eye(D), size=K)
 
-    return LinearGaussianParameters(1, 1, 1, V, Z)
+    return Parameters(1, 1, V, Z)
 
 
 @numba.jitclass([
-    ('alpha', numba.float64),
     ('tau_a', numba.float64),
     ('tau_x', numba.float64),
     ('V', numba.float64[:, :]),
     ('Z', numba.int64[:, :])
 ])
-class LinearGaussianParameters(object):
-    def __init__(self, alpha, tau_a, tau_x, V, Z):
-        self.alpha = alpha
-
+class Parameters(object):
+    def __init__(self, tau_a, tau_x, V, Z):
         self.tau_a = tau_a
 
         self.tau_x = tau_x
@@ -355,8 +226,7 @@ class LinearGaussianParameters(object):
         return self.Z.shape[0]
 
     def copy(self):
-        return LinearGaussianParameters(
-            self.alpha,
+        return Parameters(
             self.tau_a,
             self.tau_x,
             self.V.copy(),
@@ -364,7 +234,7 @@ class LinearGaussianParameters(object):
         )
 
 
-class LinearGaussianPriors(object):
+class Priors(object):
     def __init__(self, alpha=None, tau_a=None, tau_x=None):
         if alpha is None:
             alpha = np.ones(2)
@@ -385,18 +255,24 @@ class LinearGaussianPriors(object):
 #=========================================================================
 # Densities and proposals
 #=========================================================================
-@numba.jitclass([
-    ('row_idx', numba.int64)
-])
-class LinearGaussianDensity(object):
-    def __init__(self, row_idx):
-        self.row_idx = row_idx
+@numba.jitclass([])
+class DataDistribution(object):
+    def __init__(self):
+        pass
 
     def log_p(self, data, params):
+        log_p = 0
+
+        for row_idx in range(params.N):
+            log_p += self.log_p_row(data, params, row_idx)
+
+        return log_p
+
+    def log_p_row(self, data, params, row_idx):
         t_x = params.tau_x
         V = params.V
-        x = data[self.row_idx]
-        z = params.Z[self.row_idx]
+        x = data[row_idx]
+        z = params.Z[row_idx]
 
         D = params.D
 
@@ -494,8 +370,7 @@ class CollapsedProposal(object):
 
         V_new = np.zeros((K_new, params.D))
 
-        return LinearGaussianParameters(
-            params.alpha,
+        return Parameters(
             params.tau_a,
             params.tau_x,
             V_new,
@@ -532,7 +407,7 @@ class UncollapsedProposal(object):
             np.zeros(params.D), (1 / params.tau_a) * np.eye(params.D), size=num_singletons
         )
 
-        return LinearGaussianParameters(
+        return Parameters(
             params.alpha,
             params.tau_a,
             params.tau_x,
