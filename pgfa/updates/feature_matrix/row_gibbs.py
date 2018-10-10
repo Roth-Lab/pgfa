@@ -25,14 +25,14 @@ class RowGibbsUpdater(FeatureAllocationMatrixUpdater):
 
         Zs = np.array(Zs, dtype=np.int)
 
-        params = do_row_gibbs_update(
+        return do_row_gibbs_update(
             data,
             dist,
             cols,
             feat_probs,
             params,
             row_idx,
-            max_cols=max_cols
+            Zs
         )
 
 
