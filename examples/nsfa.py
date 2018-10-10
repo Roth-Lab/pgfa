@@ -1,11 +1,10 @@
 import numpy as np
 import os
-import scipy.stats
 
-import pgfa.models.nsfa
-import pgfa.math_utils
-import pgfa.utils
-from pgfa.math_utils import ffa_rvs, ibp_rvs
+from pgfa.feature_allocation_priors import BetaBernoulliFeatureAllocationDistribution
+from pgfa.models.nsfa import Parameters, NonparametricSparaseFactorAnalysisModel
+from pgfa.updates.feature_matrix import GibbsMixtureUpdater, ParticleGibbsUpdater
+from pgfa.utils import get_b_cubed_score
 
 os.environ['NUMBA_WARNINGS'] = '1'
 
@@ -19,35 +18,21 @@ def main():
     N_train = 1000
     N_test = 1000
 
-    params_train = get_test_params(N_train, K, D, seed=0)
+    feat_alloc_prior = BetaBernoulliFeatureAllocationDistribution(1, 1, K)
 
-    params_test = get_test_params(N_test, K, D, params=params_train, seed=1)
+    params_train = get_test_params(feat_alloc_prior, N_train, D, seed=0)
+
+    params_test = get_test_params(feat_alloc_prior, N_test, D, params=params_train, seed=1)
 
     data_train = get_data(params_train)
 
     data_test = get_data(params_test)
 
-    print(params_train.Z.sum(axis=0))
+    feat_alloc_updater = ParticleGibbsUpdater(annealed=True)
 
-    print(params_train.F.min(), params_train.F.max())
+    feat_alloc_updater = GibbsMixtureUpdater(feat_alloc_updater)
 
-    update = 'g'
-
-    print(update)
-
-    print(params_train.Z.shape)
-
-    print(pgfa.models.nsfa.NonparametricSparaseFactorAnalysisModel(data_train, K=K, params=params_train).log_p)
-
-    print('@' * 100)
-
-    model = pgfa.models.nsfa.NonparametricSparaseFactorAnalysisModel(data_train, K=None)
-
-    old_params = model.params
-
-    model.params = params_train.copy()
-
-    model.params.Z = np.random.randint(0, 2, size=(model.params.D, model.params.K))
+    model = NonparametricSparaseFactorAnalysisModel(data_train, feat_alloc_prior, feat_alloc_updater)
 
     for i in range(num_iters):
         if i % 100 == 0:
@@ -62,23 +47,13 @@ def main():
             )
 
             if model.params.K > 0:
-                print(model.params.Z)
-                print(pgfa.utils.get_b_cubed_score(params_train.Z, model.params.Z))
+                print(get_b_cubed_score(params_train.Z, model.params.Z))
 
             print(np.sum(model.params.Z, axis=0))
 
-            print(model.params.S)
-
-
-#             print(pgfa.models.nsfa.get_min_error(model.params, params_train))
-#
-#             print(get_min_error(model.params, params_train))
-
-#             print(model.params.V[0])
-
             print('#' * 100)
 
-        model.update(update_type=update, num_particles=20)
+        model.update()
 
 
 def get_data(params):
@@ -89,27 +64,18 @@ def get_data(params):
     return data
 
 
-def get_test_params(num_data_points, num_latent_dims, num_observed_dims, params=None, seed=None):
+def get_test_params(feat_alloc_prior, num_data_points, num_observed_dims, params=None, seed=None):
     if seed is not None:
         np.random.seed(seed)
 
     D = num_observed_dims
-    K = num_latent_dims
     N = num_data_points
 
     alpha = 2
 
-    if K is None:
-        if params is None:
-            Z = ibp_rvs(alpha, D)
+    Z = feat_alloc_prior.rvs(D)
 
-        else:
-            Z = params.Z.copy()
-
-        K = Z.shape[1]
-
-    else:
-        Z = ffa_rvs(1, 1, K, D)
+    K = Z.shape[1]
 
     F = np.random.normal(0, 1, size=(K, N))
 
@@ -129,7 +95,7 @@ def get_test_params(num_data_points, num_latent_dims, num_observed_dims, params=
 
         V = params.V.copy()
 
-    return pgfa.models.nsfa.Parameters(alpha, gamma, F, S, V, Z)
+    return Parameters(alpha, gamma, F, S, V, Z)
 
 
 def get_min_error(params_pred, params_true):

@@ -10,13 +10,17 @@ import pgfa.updates.feature_matrix
 
 
 class NonparametricSparaseFactorAnalysisModel(object):
-    def __init__(self, data, K=None, params=None, priors=None):
+    def __init__(self, data, feat_alloc_prior, feat_alloc_updater, params=None, priors=None):
         self.data = data
 
-        self.ibp = (K is None)
+        self.feat_alloc_updater = feat_alloc_updater
+
+        self.feat_alloc_prior = feat_alloc_prior
+
+        self.data_dist = DataDistribution()
 
         if params is None:
-            params = get_params_from_data(data, K=K)
+            params = get_params_from_data(data, feat_alloc_prior)
 
         self.params = params
 
@@ -41,21 +45,14 @@ class NonparametricSparaseFactorAnalysisModel(object):
 
         log_p = 0
 
+        # Binary matrix prior
+        log_p += self.feat_alloc_prior.log_p(Z)
+
         # Likelihood
         for n in range(params.N):
             log_p += scipy.stats.multivariate_normal.logpdf(
                 X[:, n], W @ F[:, n], np.diag(1 / S), allow_singular=True
             )
-
-        # Binary matrix prior
-        if self.ibp:
-            log_p += log_ibp_pdf(alpha, Z)
-
-            # Prior on alpha
-            log_p += scipy.stats.gamma.logpdf(alpha, priors.alpha[0], scale=(1 / priors.alpha[1]))
-
-        else:
-            log_p += log_ffa_pdf(priors.Z[0], priors.Z[1], Z)
 
         # Common factors prior
         log_p += np.sum(
@@ -106,28 +103,17 @@ class NonparametricSparaseFactorAnalysisModel(object):
 
         return log_p
 
-    def update(self, num_particles=10, resample_threshold=0.5, update_type='g'):
-        self.params = update_Z(
-            self.data,
-            self.params,
-            self.priors,
-            ibp=self.ibp,
-            num_particles=num_particles,
-            resample_threshold=resample_threshold,
-            update_type=update_type
-        )
+    def update(self):
+        self.params = self.feat_alloc_updater.update(self.data, self.data_dist, self.feat_alloc_prior, self.params)
 
-#         self.params = update_V(self.data, self.params)
-# 
-#         if self.params.K > 0:
-#             self.params = update_F(self.data, self.params)
-# 
-#         self.params = update_gamma(self.params, self.priors)
-# 
-#         self.params = update_S(self.data, self.params, self.priors)
-# 
-#         if self.ibp:
-#             self.params = update_alpha(self.params, self.priors)
+        self.params = update_V(self.data, self.params)
+
+        if self.params.K > 0:
+            self.params = update_F(self.data, self.params)
+
+        self.params = update_gamma(self.params, self.priors)
+
+        self.params = update_S(self.data, self.params, self.priors)
 
 
 #=========================================================================
@@ -232,50 +218,6 @@ def update_V(data, params):
             R = rk - Z[d, k] * V[d, k] * F[k]
 
     params.V = V
-
-    return params
-
-
-def update_Z(data, params, priors, ibp=False, num_particles=10, resample_threshold=0.5, update_type='g'):
-    for row_idx in pgfa.updates.feature_matrix.get_rows(params.D):
-        density = Density(row_idx)
-
-        m = np.sum(params.Z, axis=0)
-
-        m -= params.Z[row_idx]
-
-        if ibp:
-            a = m
-
-            b = params.D - m
-
-        else:
-            a = priors.Z[1] + m
-
-            b = priors.Z[0] + (params.D - 1 - m)
-
-        cols = pgfa.updates.feature_matrix.get_cols(m, include_singletons=(not ibp))
-
-        if update_type == 'g':
-            params = pgfa.updates.feature_matrix.do_gibbs_update(density, a, b, cols, row_idx, data, params)
-
-        elif update_type == 'pg':
-            params = pgfa.updates.feature_matrix.do_particle_gibbs_update(
-                density, a, b, cols, row_idx, data, params,
-                annealed=False, num_particles=num_particles, resample_threshold=resample_threshold
-            )
-
-        elif update_type == 'pga':
-            params = pgfa.updates.feature_matrix.do_particle_gibbs_update(
-                density, a, b, cols, row_idx, data, params,
-                annealed=True, num_particles=num_particles, resample_threshold=resample_threshold
-            )
-
-        elif update_type == 'rg':
-            params = pgfa.updates.feature_matrix.do_row_gibbs_update(density, a, b, cols, row_idx, data, params)
-
-        if ibp:
-            params = update_Z_singletons(data, params, row_idx)
 
     return params
 
@@ -527,15 +469,11 @@ def get_log_p_F_singleton(data, params, row_idx):
 #=========================================================================
 # Container classes
 #=========================================================================
-def get_params_from_data(data, K=None):
+def get_params_from_data(data, feat_alloc_prior):
     D = data.shape[0]
     N = data.shape[1]
 
-    if K is None:
-        Z = ibp_rvs(1, D)
-
-    else:
-        Z = ffa_rvs(1, 1, K, D)
+    Z = feat_alloc_prior.rvs(D)
 
     K = Z.shape[1]
 
@@ -620,17 +558,23 @@ class Priors(object):
 #=========================================================================
 # Densities and proposals
 #=========================================================================
-@numba.jitclass([
-    ('row_idx', numba.int64),
-])
-class Density(object):
-    def __init__(self, row_idx):
-        self.row_idx = row_idx
+@numba.jitclass([])
+class DataDistribution(object):
+    def __init__(self):
+        pass
 
     def log_p(self, data, params):
         log_p = 0
 
-        w = params.Z[self.row_idx] * params.V[self.row_idx]
+        for row_idx in range(params.N):
+            log_p += self.log_p_row(data, params, row_idx)
+
+        return log_p
+
+    def log_p_row(self, data, params, row_idx):
+        log_p = 0
+
+        w = params.Z[row_idx] * params.V[row_idx]
 
         for n in range(params.N):
             f = params.F[:, n]
@@ -638,7 +582,7 @@ class Density(object):
             mean = np.sum(w * f)
 
             log_p += log_normal_likelihood(
-                data[self.row_idx, n], mean, params.S[self.row_idx]
+                data[row_idx, n], mean, params.S[row_idx]
             )
 
         return log_p
@@ -693,8 +637,6 @@ class CollapsedDensity(object):
         M = s * v @ v.T + np.eye(k)
 
         m = s * np.linalg.solve(M, v)[:, np.newaxis] * r[np.newaxis, :]
-
-#         m = s * np.linalg.solve(M, v) @ r
 
         log_p = 0
         log_p -= 0.5 * params.N * np.log(np.linalg.det(M))
