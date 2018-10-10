@@ -1,10 +1,10 @@
 import numba
 import numpy as np
 
-from .utils import get_rows
+from .base import FeatureAllocationMatrixUpdater
 
 
-class MetropolisHastingsUpdater(object):
+class MetropolisHastingsUpdater(FeatureAllocationMatrixUpdater):
     def __init__(self, adaptation_rate=None, flip_prob=0.5, target_accept_rate=0.44):
         self.adaptation_rate = adaptation_rate
 
@@ -20,29 +20,24 @@ class MetropolisHastingsUpdater(object):
 
     @property
     def accept_rate(self):
-        return self._num_accepted / self._num_proposed
+        return self._num_accepted / max(self._num_proposed, 1)
 
-    def update(self, data, dist, feat_alloc_prior, params):
-        for row_idx in get_rows(params.N):
-            cols = feat_alloc_prior.get_update_cols(row_idx, params.Z)
+    def update_row(self, cols, data, dist, feat_probs, params, row_idx):
+        accept, params = do_metropolis_hastings_update(
+            data, dist, cols, feat_probs, params, row_idx, flip_prob=self.flip_prob
+        )
 
-            feat_probs = feat_alloc_prior.get_feature_probs(row_idx, params.Z)
+        self._num_accepted += accept
 
-            accept, params = do_metropolis_hastings_update(
-                data, dist, cols, feat_probs, params, row_idx, flip_prob=self.flip_prob
-            )
+        if self.adaptation_rate is not None:
+            if self._num_proposed_since_adapted >= self.adaptation_rate:
+                self._adapt()
 
-            self._num_accepted += accept
+                self._num_proposed_since_adapted = 0
 
-            if self.adaptation_rate is not None:
-                if self._num_proposed_since_adapted >= self.adaptation_rate:
-                    self._adapt()
+        self._num_proposed += 1
 
-                    self._num_proposed_since_adapted = 0
-
-            self._num_proposed += 1
-
-            self._num_proposed_since_adapted += 1
+        self._num_proposed_since_adapted += 1
 
         return params
 
