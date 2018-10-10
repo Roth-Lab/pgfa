@@ -3,10 +3,10 @@ import numpy as np
 
 from pgfa.math_utils import discrete_rvs, log_normalize, log_sum_exp
 
-from .utils import get_rows
+from .base import FeatureAllocationMatrixUpdater
 
 
-class ParticleGibbsUpdater(object):
+class ParticleGibbsUpdater(FeatureAllocationMatrixUpdater):
     def __init__(self, annealed=False, num_particles=10, resample_threshold=0.5):
         self.annealed = annealed
 
@@ -14,25 +14,18 @@ class ParticleGibbsUpdater(object):
 
         self.resample_threshold = resample_threshold
 
-    def update(self, data, dist, feat_alloc_prior, params):
-        for row_idx in get_rows(params.N):
-            cols = feat_alloc_prior.get_update_cols(row_idx, params.Z)
-
-            feat_probs = feat_alloc_prior.get_feature_probs(row_idx, params.Z)
-
-            params = do_particle_gibbs_update(
-                cols,
-                data,
-                dist,
-                feat_probs,
-                params,
-                row_idx,
-                annealed=self.annealed,
-                num_particles=self.num_particles,
-                resample_threshold=self.resample_threshold
-            )
-
-        return params
+    def update_row(self, cols, data, dist, feat_probs, params, row_idx):
+        return do_particle_gibbs_update(
+            cols,
+            data,
+            dist,
+            feat_probs,
+            params,
+            row_idx,
+            annealed=self.annealed,
+            num_particles=self.num_particles,
+            resample_threshold=self.resample_threshold
+        )
 
 
 @numba.jit

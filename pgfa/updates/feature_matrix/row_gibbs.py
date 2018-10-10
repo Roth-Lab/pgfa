@@ -4,57 +4,40 @@ import numpy as np
 
 from pgfa.math_utils import discrete_rvs, log_normalize
 
-from .utils import get_rows
+from .base import FeatureAllocationMatrixUpdater
 
 
-class RowGibbsUpdater(object):
+class RowGibbsUpdater(FeatureAllocationMatrixUpdater):
     def __init__(self, max_cols=None):
         self.max_cols = max_cols
 
-    def update(self, data, dist, feat_alloc_prior, params):
-        for row_idx in get_rows(params.N):
-            cols = feat_alloc_prior.get_update_cols(row_idx, params.Z)
+    def update_row(self, cols, data, dist, feat_probs, params, row_idx):
+        max_cols = len(cols)
 
-            feat_probs = feat_alloc_prior.get_feature_probs(row_idx, params.Z)
+        if self.max_cols is not None:
+            max_cols = min(self.max_cols, max_cols)
 
-            if self.max_cols is None:
-                max_cols = len(cols)
+        update_cols = np.random.choice(cols, replace=False, size=max_cols)
 
-            else:
-                max_cols = self.max_cols
+        Zs = np.tile(params.Z[row_idx], (2**max_cols, 1))
 
-            params = do_row_gibbs_update(
-                data,
-                dist,
-                cols,
-                feat_probs,
-                params,
-                row_idx,
-                max_cols=max_cols
-            )
+        Zs[:, update_cols] = list(map(np.array, itertools.product([0, 1], repeat=max_cols)))
 
-        return params
+        Zs = np.array(Zs, dtype=np.int)
 
-
-def do_row_gibbs_update(data, dist, cols, feat_probs, params, row_idx, max_cols=1):
-    K = len(cols)
-
-    if K > max_cols:
-        K = max_cols
-
-    update_cols = np.random.choice(cols, replace=False, size=K)
-
-    Zs = np.tile(params.Z[row_idx], (2**K, 1))
-
-    Zs[:, update_cols] = list(map(np.array, itertools.product([0, 1], repeat=K)))
-
-    Zs = np.array(Zs, dtype=np.int)
-
-    return _do_row_gibbs_update(data, dist, cols, feat_probs, params, row_idx, Zs)
+        params = do_row_gibbs_update(
+            data,
+            dist,
+            cols,
+            feat_probs,
+            params,
+            row_idx,
+            max_cols=max_cols
+        )
 
 
 @numba.jit
-def _do_row_gibbs_update(data, dist, cols, feat_probs, params, row_idx, Zs):
+def do_row_gibbs_update(data, dist, cols, feat_probs, params, row_idx, Zs):
     log_p1 = np.log(feat_probs)
 
     log_p0 = np.log(1 - feat_probs)
