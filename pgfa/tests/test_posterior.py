@@ -12,7 +12,7 @@ from pgfa.tests.mocks import MockDistribution, MockFeatureAllocationPrior, MockP
 
 
 class Test(unittest.TestCase):
-    K = 2
+    K = 4
     N = 3
     D = 10
 
@@ -28,10 +28,17 @@ class Test(unittest.TestCase):
 
         model = self._get_model(feat_alloc_updater)
 
-        self._run_test(model, burnin=int(1e3), num_iters=int(1e4))
+        self._run_test(model, num_iters=int(1e4))
 
     def test_particle_gibbs_annealed_updater(self):
         feat_alloc_updater = ParticleGibbsUpdater(annealed=True, num_particles=20, resample_threshold=0.5)
+
+        model = self._get_model(feat_alloc_updater)
+
+        self._run_test(model, num_iters=int(1e4))
+
+    def test_restricted_row_gibbs(self):
+        feat_alloc_updater = RowGibbsUpdater(max_cols=3)
 
         model = self._get_model(feat_alloc_updater)
 
@@ -50,8 +57,6 @@ class Test(unittest.TestCase):
         dist = MockDistribution()
 
         feat_alloc_prior = BetaBernoulliFeatureAllocationDistribution(1, 1, self.K)
-
-        feat_alloc_prior = MockFeatureAllocationPrior()
 
         params = MockParams(self.K, self.N)
 
