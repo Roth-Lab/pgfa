@@ -39,7 +39,7 @@ def log_factorial(x):
     return log_gamma(x + 1)
 
 
-@numba.jit(nopython=True)
+@numba.vectorize([numba.float64(numba.float64)])
 def log_gamma(x):
     return np.math.lgamma(x)
 
