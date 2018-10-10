@@ -1,7 +1,9 @@
 import numpy as np
 
-from pgfa.math_utils import bernoulli_rvs, ffa_rvs, ibp_rvs
+from pgfa.feature_allocation_priors import BetaBernoulliFeatureAllocationDistribution
+from pgfa.math_utils import bernoulli_rvs
 from pgfa.models.lfrm import LatentFactorRelationalModel, Parameters
+from pgfa.updates.feature_matrix import GibbsMixtureUpdater, ParticleGibbsUpdater
 from pgfa.utils import get_b_cubed_score
 
 
@@ -11,64 +13,40 @@ def main():
     K = 4
     N = 20
 
-    update_type = 'g'
+    feat_alloc_prior = BetaBernoulliFeatureAllocationDistribution(1, 1, K)
 
-    print(update_type)
+    data, data_true, params = simulate_data(feat_alloc_prior, N)
 
-    data, data_true, params = simulate_data(N, K=K)
+    feat_alloc_updater = ParticleGibbsUpdater(annealed=True)
 
-    print(np.sum(params.Z, axis=0))
+    feat_alloc_updater = GibbsMixtureUpdater(feat_alloc_updater)
 
-    print(params.V)
-
-    print(LatentFactorRelationalModel(data, K=K, params=params).log_p)
-
-    print('#' * 100)
-
-    model = LatentFactorRelationalModel(data, K=None)
-
-    model.params = params.copy()
-
-#     model.params.tau = 1e-6
-
-#     model.params.Z = params.Z.copy()
-
-#     model.params.V = params.V.copy()
-
-    model.priors.Z = np.array([0.1, 0.9])
+    model = LatentFactorRelationalModel(data, feat_alloc_prior, feat_alloc_updater)
 
     for i in range(10000):
         if i % 100 == 0:
-            print(i, model.params.K, model.params.alpha, model.params.tau, model.log_p)
+            print(i, model.params.K, model.log_p)
+
+            if model.params.K > 0:
+                print(get_b_cubed_score(params.Z, model.params.Z))
+
             print(np.sum(model.params.Z, axis=0))
-            print(get_b_cubed_score(params.Z, model.params.Z))
-            print(1 / (params.N ** 2) * np.sum(np.abs(data_true - model.predict(method='max'))))
-            if model.params.K <= 4:
-                print(model.params.V)
+
             print('#' * 100)
 
-        model.update(update_type=update_type)
+        model.update()
 
 
-def simulate_data(N, K=None, alpha=1, tau=1):
-    if K is None:
-        Z = ibp_rvs(alpha, N)
+def simulate_data(feat_alloc_prior, N, tau=1):
+    Z = feat_alloc_prior.rvs(N)
 
-        K = Z.shape[1]
-
-    else:
-        Z = ffa_rvs(1, 1, K, N)
-
-#     V = np.random.normal(0, 1 / np.sqrt(tau), size=K)
-#     V = np.random.gamma(10, 10, size=K)
-#     V = np.diag(V)
+    K = Z.shape[1]
 
     V = np.random.normal(0, 1 / np.sqrt(tau), size=(K, K))
-#     V = np.random.gamma(10, 10, size=(K, K))
     V = np.triu(V)
     V = V + V.T - np.diag(np.diag(V))
 
-    params = Parameters(alpha, tau, V, Z)
+    params = Parameters(1, tau, V, Z)
 
     data_true = np.zeros((N, N))
 
