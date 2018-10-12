@@ -7,9 +7,7 @@ class GibbsMixtureUpdater(object):
 
         self.other_updater = feat_alloc_updater
 
-    def update(self, data, dist, feat_alloc_prior, params):
-        params = self.gibbs_updater.update(data, dist, feat_alloc_prior, params)
+    def update(self, model):
+        self.gibbs_updater.update(model)
 
-        params = self.other_updater.update(data, dist, feat_alloc_prior, params)
-
-        return params
+        self.other_updater.update(model)

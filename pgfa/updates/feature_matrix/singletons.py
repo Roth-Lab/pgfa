@@ -1,25 +1,30 @@
-import numpy as np
-
 from pgfa.math_utils import do_metropolis_hastings_accept_reject
 
 
-def do_mh_singletons_update(density, proposal, data, params):
-    """ Update the singletons using a Metropolis Hastings proposal from the prior.
-    """
-    # Current state
-    log_p_old = density.log_p(data, params)
+class MetropolisHastingsSingletonUpdater(object):
+    def __init__(self, proposal):
+        self.proposal = proposal
 
-    # New state
-    num_new_singletons = np.random.poisson(params.alpha / params.Z.shape[0])
+    def update_row(self, model, row_idx):
+        data = model.data
 
-    params_new = proposal.rvs(data, params, num_new_singletons)
+        params_old = model.params
 
-    log_p_new = density.log_p(data, params_new)
+        num_singletons = model.feat_alloc_prior.sample_num_singletons(model.params.Z)
 
-    if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, 0, 0):
-        params = params_new
+        params_new = self.proposal.rvs(data, params_old, num_singletons, row_idx)
 
-    return params
+        log_p_old = model.joint_dist.log_p(data, params_old)
+
+        log_p_new = model.joint_dist.log_p(data, params_new)
+
+        if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, 0, 0):
+            params = params_new
+
+        else:
+            params = params_old
+
+        return params
 
 # def do_mh_singletons_update(row, density, proposal, alpha, V, X, Z):
 #     """ Update the singletons using a Metropolis Hastings proposal from the prior.

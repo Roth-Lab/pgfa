@@ -7,12 +7,14 @@ from .base import FeatureAllocationMatrixUpdater
 
 
 class ParticleGibbsUpdater(FeatureAllocationMatrixUpdater):
-    def __init__(self, annealed=False, num_particles=10, resample_threshold=0.5):
+    def __init__(self, annealed=False, num_particles=10, resample_threshold=0.5, singletons_updater=None):
         self.annealed = annealed
 
         self.num_particles = num_particles
 
         self.resample_threshold = resample_threshold
+
+        self.singletons_updater = singletons_updater
 
     def update_row(self, cols, data, dist, feat_probs, params, row_idx):
         return do_particle_gibbs_update(

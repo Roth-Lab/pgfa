@@ -7,5 +7,5 @@ from .mixture import GibbsMixtureUpdater
 from .metropolis_hastings import MetropolisHastingsUpdater
 from .particle_gibbs import ParticleGibbsUpdater
 from .row_gibbs import RowGibbsUpdater
-from .singletons import do_mh_singletons_update
+from .singletons import MetropolisHastingsSingletonUpdater
 from .utils import get_cols, get_rows

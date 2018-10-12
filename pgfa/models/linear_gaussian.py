@@ -3,56 +3,14 @@ import numpy as np
 import scipy.stats
 
 
-class CollapsedLinearGaussianModel(object):
-    def __init__(self, data, K=None, params=None, priors=None):
-        self.data = data
-
-        self.ibp = (K is None)
-
-        if params is None:
-            params = get_params_from_data(data, K=K)
-
-        self.params = params
-
-        if priors is None:
-            priors = Priors()
-
-        self.priors = priors
-
-    def log_p(self, data, params):
-        """ Log of joint pdf.
-        """
-        pass
-
-    def log_predictive_p(self, data, params):
-        """ Log of predicitve pdf.
-        """
-        pass
-
-    def update(self):
-        self.params = self.feat_alloc_updater.update(self.data, self.data_dist, self.feat_alloc_prior, self.params)
-
-        self.params = update_alpha(self.params, self.priors)
-
-        self.params = update_V(self.data, self.params)
-
-        self.params = update_tau_a(self.params, self.priors)
-
-        self.params = update_tau_x(self.data, self.params, self.priors)
-
-
 class LinearGaussianModel(object):
-    def __init__(self, data, feat_alloc_prior, feat_alloc_updater, params=None, priors=None):
+    def __init__(self, data, feat_alloc_prior, collapsed=False, params=None, priors=None):
         self.data = data
-
-        self.feat_alloc_updater = feat_alloc_updater
 
         self.feat_alloc_prior = feat_alloc_prior
 
-        self.data_dist = DataDistribution()
-
         if params is None:
-            params = get_params_from_data(data, feat_alloc_prior)
+            params = self.get_params_from_data()
 
         self.params = params
 
@@ -60,89 +18,62 @@ class LinearGaussianModel(object):
             priors = Priors()
 
         self.priors = priors
+
+        if collapsed:
+            self.data_dist = CollapsedDataDistribution()
+
+            self.joint_dist = CollapsedJointDistribution(feat_alloc_prior, priors)
+
+        else:
+            self.data_dist = UncollapsedDataDistribution()
+
+            self.joint_dist = UncollapsedJointDistribution(feat_alloc_prior, priors)
 
     @property
     def log_p(self):
         """ Log of joint pdf.
         """
-        t_a = self.params.tau_a
-        t_x = self.params.tau_x
-        V = self.params.V
-        Z = self.params.Z
-        X = self.data
+        return self.joint_dist.log_p(self.data, self.params)
 
-        D = self.params.D
-        K = self.params.K
-        N = self.params.N
+    def get_params_from_data(self):
+        D = self.data.shape[1]
+        N = self.data.shape[0]
 
-        log_p = 0
+        Z = self.feat_alloc_prior.rvs(N)
 
-        # Binary matrix prior
-        log_p += self.feat_alloc_prior.log_p(self.params.Z)
+        K = Z.shape[1]
 
-        # Gamma prior on $\tau_{a}$
-        a = self.priors.tau_a[0]
-        b = self.priors.tau_a[1]
-        log_p += scipy.stats.gamma.logpdf(t_a, a, scale=(1 / b))
+        V = np.random.multivariate_normal(np.zeros(D), np.eye(D), size=K)
 
-        # Gamma prior on $\tau_{x}$
-        a = self.priors.tau_x[0]
-        b = self.priors.tau_x[1]
-        log_p += scipy.stats.gamma.logpdf(t_x, a, scale=(1 / b))
-
-        # Prior on V
-        log_p += scipy.stats.matrix_normal.logpdf(
-            V,
-            mean=np.zeros((K, D)),
-            colcov=np.eye(D),
-            rowcov=(1 / t_x) * np.eye(K)
-        )
-
-        log_p += scipy.stats.matrix_normal.logpdf(
-            X,
-            mean=Z @ V,
-            colcov=np.eye(D),
-            rowcov=(1 / t_x) * np.eye(N)
-        )
-
-        return log_p
-
-    def log_predictive_p(self, data, params):
-        """ Log of predicitve pdf.
-        """
-        pass
-
-    def update(self):
-        self.params = self.feat_alloc_updater.update(self.data, self.data_dist, self.feat_alloc_prior, self.params)
-
-        if self.params.K > 0:
-            self.params = update_V(self.data, self.params)
-
-        self.params = update_tau_a(self.params, self.priors)
-
-        self.params = update_tau_x(self.data, self.params, self.priors)
+        return Parameters(1, 1, V, Z)
 
 
 #=========================================================================
 # Updates
 #=========================================================================
-def update_alpha(params, priors):
-    a = params.K + priors.alpha[0]
+class LinearGaussianModelUpdater(object):
+    def __init__(self, feat_alloc_updater):
+        self.feat_alloc_updater = feat_alloc_updater
 
-    b = np.sum(1 / np.arange(1, params.N + 1)) + priors.alpha[1]
+    def update(self, model):
+        self.feat_alloc_updater.update(model)
 
-    params.alpha = np.random.gamma(a, 1 / b)
+        model.params = update_V(model.data, model.params)
 
-    return params
+        model.params = update_tau_a(model.params, model.priors)
+
+        model.params = update_tau_x(model.data, model.params, model.priors)
+
+        model.feat_alloc_prior.update(model.params.Z)
 
 
 def update_V(data, params):
-    t_a = params.tau_a
+    t_v = params.tau_v
     t_x = params.tau_x
     Z = params.Z
     X = data
 
-    M = np.linalg.inv(Z.T @ Z + (t_a / t_x) * np.eye(params.K))
+    M = np.linalg.inv(Z.T @ Z + (t_v / t_x) * np.eye(params.K))
 
     params.V = scipy.stats.matrix_normal.rvs(
         mean=M @ Z.T @ X,
@@ -156,11 +87,11 @@ def update_V(data, params):
 def update_tau_a(params, priors):
     V = params.V
 
-    a = priors.tau_a[0] + 0.5 * params.K * params.D
+    a = priors.tau_v[0] + 0.5 * params.K * params.D
 
-    b = priors.tau_a[1] + 0.5 * np.trace(V.T @ V)
+    b = priors.tau_v[1] + 0.5 * np.trace(V.T @ V)
 
-    params.tau_a = np.random.gamma(a, 1 / b)
+    params.tau_v = np.random.gamma(a, 1 / b)
 
     return params
 
@@ -184,28 +115,15 @@ def update_tau_x(data, params, priors):
 #=========================================================================
 # Container classes
 #=========================================================================
-def get_params_from_data(data, feat_alloc_prior):
-    D = data.shape[1]
-    N = data.shape[0]
-
-    Z = feat_alloc_prior.rvs(N)
-
-    K = Z.shape[1]
-
-    V = np.random.multivariate_normal(np.zeros(D), np.eye(D), size=K)
-
-    return Parameters(1, 1, V, Z)
-
-
 @numba.jitclass([
-    ('tau_a', numba.float64),
+    ('tau_v', numba.float64),
     ('tau_x', numba.float64),
     ('V', numba.float64[:, :]),
     ('Z', numba.int64[:, :])
 ])
 class Parameters(object):
-    def __init__(self, tau_a, tau_x, V, Z):
-        self.tau_a = tau_a
+    def __init__(self, tau_v, tau_x, V, Z):
+        self.tau_v = tau_v
 
         self.tau_x = tau_x
 
@@ -227,7 +145,7 @@ class Parameters(object):
 
     def copy(self):
         return Parameters(
-            self.tau_a,
+            self.tau_v,
             self.tau_x,
             self.V.copy(),
             self.Z.copy()
@@ -235,16 +153,11 @@ class Parameters(object):
 
 
 class Priors(object):
-    def __init__(self, alpha=None, tau_a=None, tau_x=None):
-        if alpha is None:
-            alpha = np.ones(2)
+    def __init__(self, tau_v=None, tau_x=None):
+        if tau_v is None:
+            tau_v = np.ones(2)
 
-        self.alpha = alpha
-
-        if tau_a is None:
-            tau_a = np.ones(2)
-
-        self.tau_a = tau_a
+        self.tau_v = tau_v
 
         if tau_x is None:
             tau_x = np.ones(2)
@@ -255,8 +168,72 @@ class Priors(object):
 #=========================================================================
 # Densities and proposals
 #=========================================================================
+class CollapsedDataDistribution(object):
+    def log_p(self, data, params):
+        return self.log_p_row(data, params, -1)
+
+    def log_p_row(self, data, params, row_idx):
+        t_v = params.tau_v
+        t_x = params.tau_x
+        Z = params.Z
+        X = data
+
+        D = params.D
+        K = params.K
+        N = params.N
+
+        M = np.linalg.inv(Z.T @ Z + (t_v / t_x) * np.eye(K))
+
+        log_p = 0
+
+        log_p += 0.5 * (N - K) * D * t_x
+
+        log_p += 0.5 * K * D * t_v
+
+        log_p -= 0.5 * N * D * np.log(2 * np.pi)
+
+        log_p += 0.5 * D * np.log(np.linalg.det(M))
+
+        log_p -= 0.5 * t_x * np.trace(X.T @ (np.eye(N) - Z @ M @ Z.T) @ X)
+
+        return log_p
+
+
+class CollapsedJointDistribution(object):
+    def __init__(self, feat_alloc_prior, priors):
+        self.data_dist = CollapsedDataDistribution()
+
+        self.feat_alloc_prior = feat_alloc_prior
+
+        self.priors = priors
+
+    def log_p(self, data, params):
+        t_v = params.tau_v
+        t_x = params.tau_x
+
+        log_p = 0
+
+        # Binary matrix prior
+        log_p += self.feat_alloc_prior.log_p(params.Z)
+
+        # Data
+        log_p += self.data_dist.log_p(data, params)
+
+        # Gamma prior on $\tau_{a}$
+        a = self.priors.tau_v[0]
+        b = self.priors.tau_v[1]
+        log_p += scipy.stats.gamma.logpdf(t_v, a, scale=(1 / b))
+
+        # Gamma prior on $\tau_{x}$
+        a = self.priors.tau_x[0]
+        b = self.priors.tau_x[1]
+        log_p += scipy.stats.gamma.logpdf(t_x, a, scale=(1 / b))
+
+        return log_p
+
+
 @numba.jitclass([])
-class DataDistribution(object):
+class UncollapsedDataDistribution(object):
     def __init__(self):
         pass
 
@@ -286,75 +263,56 @@ class DataDistribution(object):
         return log_p
 
 
-class LinearGaussianMarginalDensity(object):
-    def __init__(self, row_idx):
-        self.row_idx = row_idx
-#
-#         self.t_a = t_a
-#
-#         self.t_x = t_x
-#
-#         self.rank_one = rank_one
-#
-#         if rank_one:
-#             K = Z.shape[1]
-#
-#             M_inv = Z.T @ Z + (t_a / t_x) * np.eye(K)
-#
-#             L, _ = scipy.linalg.cho_factor(M_inv, lower=True)
-#
-#             z = Z[row]
-#
-#             cholesky_update(L, z, alpha=-1, inplace=True)
-#
-#             self.L_i = L
+class UncollapsedJointDistribution(object):
+    def __init__(self, feat_alloc_prior, priors):
+        self.data_dist = UncollapsedDataDistribution()
+
+        self.feat_alloc_prior = feat_alloc_prior
+
+        self.priors = priors
 
     def log_p(self, data, params):
-        t_a = params.tau_a
+        t_v = params.tau_v
         t_x = params.tau_x
-        Z = params.Z
-        X = data
+        V = params.V
 
         D = params.D
         K = params.K
-        N = params.N
 
         log_p = 0
-        log_p += 0.5 * (N - K) * D * t_x
-        log_p += 0.5 * K * D * t_a
-        log_p -= 0.5 * N * D * np.log(2 * np.pi)
 
-#         if self.rank_one:
-#             L_i = self.L_i
-#
-#             z = Z[self.row]
-#
-#             L = cholesky_update(L_i, z, alpha=1, inplace=False)
-#
-#             MZ = scipy.linalg.cho_solve((L, True), Z.T)
-#
-#             log_det_M = -1 * cholesky_log_det(L)
-#
-#             log_p += 0.5 * D * log_det_M
-#             log_p -= 0.5 * t_x * np.trace(X.T @ (np.eye(N) - Z @ MZ) @ X)
-#
-#         else:
-        M = np.linalg.inv(Z.T @ Z + (t_a / t_x) * np.eye(K))
+        # Binary matrix prior
+        log_p += self.feat_alloc_prior.log_p(params.Z)
 
-        log_p += 0.5 * D * np.log(np.linalg.det(M))
-        log_p -= 0.5 * t_x * np.trace(X.T @ (np.eye(N) - Z @ M @ Z.T) @ X)
+        # Data
+        log_p += self.data_dist.log_p(data, params)
+
+        # Gamma prior on $\tau_{a}$
+        a = self.priors.tau_v[0]
+        b = self.priors.tau_v[1]
+        log_p += scipy.stats.gamma.logpdf(t_v, a, scale=(1 / b))
+
+        # Gamma prior on $\tau_{x}$
+        a = self.priors.tau_x[0]
+        b = self.priors.tau_x[1]
+        log_p += scipy.stats.gamma.logpdf(t_x, a, scale=(1 / b))
+
+        # Prior on V
+        log_p += scipy.stats.matrix_normal.logpdf(
+            V,
+            mean=np.zeros((K, D)),
+            colcov=np.eye(D),
+            rowcov=(1 / t_v) * np.eye(K)
+        )
 
         return log_p
 
 
-class CollapsedProposal(object):
-    def __init__(self, row_idx):
-        self.row_idx = row_idx
-
-    def rvs(self, data, params, num_singletons):
+class SingletonsProposal(object):
+    def rvs(self, data, params, num_singletons, row_idx):
         m = np.sum(params.Z, axis=0)
 
-        m -= params.Z[self.row_idx]
+        m -= params.Z[row_idx]
 
         non_singletons_idxs = np.atleast_1d(np.squeeze(np.where(m > 0)))
 
@@ -366,50 +324,18 @@ class CollapsedProposal(object):
 
         Z_new[:, :num_non_singleton] = params.Z[:, non_singletons_idxs]
 
-        Z_new[self.row_idx, num_non_singleton:] = 1
-
-        V_new = np.zeros((K_new, params.D))
-
-        return Parameters(
-            params.tau_a,
-            params.tau_x,
-            V_new,
-            Z_new
-        )
-
-
-class UncollapsedProposal(object):
-    def __init__(self, row_idx):
-        self.row_idx = row_idx
-
-    def rvs(self, data, params, num_singletons):
-        m = np.sum(params.Z, axis=0)
-
-        m -= params.Z[self.row_idx]
-
-        non_singletons_idxs = np.atleast_1d(np.squeeze(np.where(m > 0)))
-
-        num_non_singleton = len(non_singletons_idxs)
-
-        K_new = num_non_singleton + num_singletons
-
-        Z_new = np.zeros((params.N, K_new), dtype=np.int64)
-
-        Z_new[:, :num_non_singleton] = params.Z[:, non_singletons_idxs]
-
-        Z_new[self.row_idx, num_non_singleton:] = 1
+        Z_new[row_idx, num_non_singleton:] = 1
 
         V_new = np.zeros((K_new, params.D))
 
         V_new[:num_non_singleton] = params.V[non_singletons_idxs]
 
         V_new[num_non_singleton:] = np.random.multivariate_normal(
-            np.zeros(params.D), (1 / params.tau_a) * np.eye(params.D), size=num_singletons
+            np.zeros(params.D), (1 / params.tau_v) * np.eye(params.D), size=num_singletons
         )
 
         return Parameters(
-            params.alpha,
-            params.tau_a,
+            params.tau_v,
             params.tau_x,
             V_new,
             Z_new

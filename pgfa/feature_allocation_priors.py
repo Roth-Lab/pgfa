@@ -65,10 +65,18 @@ class BetaBernoulliFeatureAllocationDistribution(object):
 
         return Z
 
+    def sample_num_singletons(self, Z):
+        raise NotImplementedError
+
+    def update(self, Z):
+        pass
+
 
 class IndianBuffetProcessDistribution(object):
-    def __init__(self, alpha):
+    def __init__(self, alpha=1, priors=np.array([1, 1])):
         self.alpha = alpha
+
+        self.priors = priors
 
     def get_feature_probs(self, row_idx, Z):
         N = Z.shape[0]
@@ -145,6 +153,22 @@ class IndianBuffetProcessDistribution(object):
                 Z[n, K:] = 1
 
         return Z.astype(np.int64)
+
+    def sample_num_singletons(self, Z):
+        N = Z.shape[0]
+
+        return np.random.poisson(self.alpha / N)
+
+    def update(self, Z):
+        K = Z.shape[1]
+
+        N = Z.shape[0]
+
+        a = K + self.priors[0]
+
+        b = np.sum(1 / np.arange(1, N + 1)) + self.priors[1]
+
+        self.alpha = np.random.gamma(a, 1 / b)
 
 
 def _get_conditional_counts(row_idx, Z):
