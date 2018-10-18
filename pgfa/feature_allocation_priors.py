@@ -1,3 +1,4 @@
+import numba
 import numpy as np
 
 from pgfa.math_utils import discrete_rvs, log_beta, log_factorial
@@ -88,7 +89,7 @@ class IndianBuffetProcessDistribution(object):
     def get_update_cols(self, row_idx, Z):
         m = _get_conditional_counts(row_idx, Z)
 
-        cols = np.atleast_1d(np.squeeze(np.where(m > 0)))
+        cols = [k for k in range(Z.shape[1]) if (m[k] > 0)]
 
         np.random.shuffle(cols)
 
@@ -171,6 +172,7 @@ class IndianBuffetProcessDistribution(object):
         self.alpha = np.random.gamma(a, 1 / b)
 
 
+@numba.njit(cache=True)
 def _get_conditional_counts(row_idx, Z):
     m = np.sum(Z, axis=0)
 
