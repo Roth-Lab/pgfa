@@ -325,7 +325,7 @@ class PriorSingletonsUpdater(object):
 
         k_new = model.feat_alloc_prior.sample_num_singletons(model.params.Z)
 
-        if k_old == k_new:
+        if (k_new == 0) and (k_old == 0):
             return model.params
 
         non_singleton_idxs = self._get_non_singleton_idxs(model.params.Z, row_idx)
@@ -355,8 +355,6 @@ class PriorSingletonsUpdater(object):
         diff = log_p_new - log_p_old
 
         if diff > np.log(np.random.rand()):
-            print('Accept', K_new)
-
             params = params_new
 
         else:
@@ -365,7 +363,7 @@ class PriorSingletonsUpdater(object):
         return params
 
     def _get_column_counts(self, Z, row_idx):
-        m = np.sum(Z)
+        m = np.sum(Z, axis=0)
 
         m -= Z[row_idx]
 
