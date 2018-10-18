@@ -255,14 +255,14 @@ class PriorSingletonsUpdater(object):
         D = model.params.D
         N = model.params.N
 
-        k_old = len(self._get_singleton_idxs(model.params.Z, row_idx))
+        k_old = len(get_singleton_idxs(model.params.Z, row_idx))
 
         k_new = model.feat_alloc_prior.sample_num_singletons(model.params.Z)
 
         if (k_new == 0) and (k_old == 0):
             return model.params
 
-        non_singleton_idxs = self._get_non_singleton_idxs(model.params.Z, row_idx)
+        non_singleton_idxs = get_non_singleton_idxs(model.params.Z, row_idx)
 
         num_non_singletons = len(non_singleton_idxs)
 
@@ -294,19 +294,22 @@ class PriorSingletonsUpdater(object):
 
         return params
 
-    def _get_column_counts(self, Z, row_idx):
-        m = np.sum(Z, axis=0)
 
-        m -= Z[row_idx]
+def get_column_counts(Z, row_idx):
+    m = np.sum(Z, axis=0)
 
-        return m
+    m -= Z[row_idx]
 
-    def _get_non_singleton_idxs(self, Z, row_idx):
-        m = self._get_column_counts(Z, row_idx)
+    return m
 
-        return np.atleast_1d(np.squeeze(np.where(m > 0)))
 
-    def _get_singleton_idxs(self, Z, row_idx):
-        m = self._get_column_counts(Z, row_idx)
+def get_non_singleton_idxs(Z, row_idx):
+    m = get_column_counts(Z, row_idx)
 
-        return np.atleast_1d(np.squeeze(np.where(m == 0)))
+    return np.atleast_1d(np.squeeze(np.where(m > 0)))
+
+
+def get_singleton_idxs(Z, row_idx):
+    m = get_column_counts(Z, row_idx)
+
+    return np.atleast_1d(np.squeeze(np.where(m == 0)))
