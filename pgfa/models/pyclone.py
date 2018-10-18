@@ -1,20 +1,17 @@
 import math
 import numba
 import numpy as np
+from pgfa.math_utils import do_metropolis_hastings_accept_reject
 
 
 class PyCloneFeatureAllocationModel(object):
-    def __init__(self, data, feat_alloc_prior, feat_alloc_updater, params=None, priors=None):
+    def __init__(self, data, feat_alloc_prior, params=None, priors=None):
         self.data = data
-
-        self.feat_alloc_updater = feat_alloc_updater
 
         self.feat_alloc_prior = feat_alloc_prior
 
-        self.data_dist = DataDistribution()
-
         if params is None:
-            params = get_params_from_data(data, feat_alloc_prior)
+            params = self.get_params_from_data()
 
         self.params = params
 
@@ -23,53 +20,64 @@ class PyCloneFeatureAllocationModel(object):
 
         self.priors = priors
 
+        self.data_dist = DataDistribution()
+
+        self.joint_dist = JointDistribution(feat_alloc_prior, priors)
+
     @property
     def log_p(self):
-        return 0
+        return self.joint_dist.log_p(self.data, self.params)
 
-    def update(self):
-        self.params = self.feat_alloc_updater.update(
-            self.data, self.data_dist, self.feat_alloc_prior, self.params
-        )
+    def get_params_from_data(self):
+        D = self.data.shape[1]
+        N = self.data.shape[0]
+
+        Z = self.feat_alloc_prior.rvs(N)
+
+        K = Z.shape[1]
+
+        phi = np.random.dirichlet(np.ones(K), size=D)
+
+        return Parameters(1, phi, Z)
 
 
 #=========================================================================
 # Updates
 #=========================================================================
-def update_alpha(params, priors):
-    a = priors.alpha[0] + params.K
+class PyCloneFeatureAllocationModelUpdater(object):
+    def __init__(self, feat_alloc_updater):
+        self.feat_alloc_updater = feat_alloc_updater
 
-    b = priors.alpha[1] + np.sum(1 / np.arange(1, params.N + 1))
+    def update(self, model):
+        self.feat_alloc_updater.update(model)
 
-    params.alpha = np.random.gamma(a, 1 / b)
+        model.params = update_eta(model.data, model.params)
 
-    return params
+        model.feat_alloc_prior.update(model.params.Z)
 
 
-# def update_eta(data, params):
-#     params_old = params
-#
-#     params_new = params.copy()
-#
-#     density = FullDensity()
-#
-#     for k in range(params.K):
-#         for d in range(params.D):
-#             params_new.eta[d, k] = np.random.gamma(0.25 * params_old.eta[d, k], 4)
-#
-#             log_p_old = density.log_p(data, params_old)
-#
-#             log_p_new = density.log_p(data, params_new)
-#
-#             u = np.random.rand()
-#
-#             if np.log(u) <= (log_p_new - log_p_old):
-#                 params_old.eta[d, k] = params_new.eta[d, k]
-#
-#             else:
-#                 params_new.eta[d, k] = params_old.eta[d, k]
-#
-#     return params_new
+def update_eta(data, params):
+    data_dist = DataDistribution()
+
+    params_old = params.copy()
+
+    params_new = params.copy()
+
+    for k in np.random.permutation(params.K):
+        for d in np.random.permutation(params.D):
+            params_new.eta[d, k] = np.random.gamma(1, 1)
+
+            log_p_old = data_dist.log_p(data, params_old)
+
+            log_p_new = data_dist.log_p(data, params_new)
+
+            if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, 0, 0):
+                params_old.eta[d, k] = params_new.eta[d, k]
+
+            else:
+                params_new.eta[d, k] = params_old.eta[d, k]
+
+    return params_new
 #
 # def update_eta(data, params):
 #     params_old = params
@@ -99,37 +107,65 @@ def update_alpha(params, priors):
 #=========================================================================
 # Densities and proposals
 #=========================================================================
-@numba.jitclass([])
 class DataDistribution(object):
-    def __init__(self):
-        pass
-
     def log_p(self, data, params):
-        log_p = 0
-
-        for row_idx in range(params.N):
-            log_p += self.log_p_row(data, params, row_idx)
-
-        return log_p
+        return _log_p(params.phi, data, params.Z)
 
     def log_p_row(self, data, params, row_idx):
         phi = params.phi
         x = data[row_idx]
         z = params.Z[row_idx].astype(np.float64)
 
+        return _log_p_row(phi, x, z)
+
+
+@numba.njit(cache=True)
+def _log_p(phi, X, Z):
+    N = Z.shape[0]
+
+    log_p = 0
+
+    for row_idx in range(N):
+        log_p += _log_p_row(phi, X[row_idx], Z[row_idx])
+
+    return log_p
+
+
+@numba.njit(cache=True)
+def _log_p_row(phi, x, z):
+    log_p = 0
+
+    for d in range(len(phi)):
+        f = np.sum(z * phi[d])
+
+        f = min(1 - 1e-6, max(1e-6, f))
+
+        log_p += binomial_log_likelihood(x[d, 0], x[d, 1], f)
+
+    return log_p
+
+
+class JointDistribution(object):
+    def __init__(self, feat_alloc_prior, priors):
+        self.data_dist = DataDistribution()
+
+        self.feat_alloc_prior = feat_alloc_prior
+
+        self.priors = priors
+
+    def log_p(self, data, params):
         log_p = 0
 
-        for d in range(params.D):
-            f = np.sum(z * phi[d])
+        # Binary matrix prior
+        log_p += self.feat_alloc_prior.log_p(params.Z)
 
-            f = min(1 - 1e-6, max(1e-6, f))
-
-            log_p += binomial_log_likelihood(x[d, 0], x[d, 1], f)
+        # Data
+        log_p += self.data_dist.log_p(data, params)
 
         return log_p
 
 
-@numba.jit(nopython=True)
+@numba.njit(cache=True)
 def binomial_log_likelihood(n, x, p):
     if p <= 0:
         if x == 0:
@@ -151,87 +187,31 @@ def binomial_log_likelihood(n, x, p):
     return log_p
 
 
-@numba.jit(nopython=True)
+@numba.njit(cache=True)
 def binomial_log_pdf(n, x, p):
     return log_binomial_coefficient(n, x) + binomial_log_likelihood(n, x, p)
 
 
-@numba.jit(cache=True, nopython=True)
+@numba.njit(cache=True)
 def log_binomial_coefficient(n, x):
     return log_factorial(n) - log_factorial(x) - log_factorial(n - x)
 
 
-@numba.jit(cache=True, nopython=True)
+@numba.njit(cache=True)
 def log_factorial(x):
     return log_gamma(x + 1)
 
 
-@numba.vectorize(["float64(float64)", "int64(float64)"])
+@numba.vectorize(["float64(float64)", "int64(float64)"], cache=True)
 def log_gamma(x):
     return math.lgamma(x)
-
-
-class Proposal(object):
-    def __init__(self, row_idx):
-        self.row_idx = row_idx
-
-    def rvs(self, data, params, num_singletons):
-        m = np.sum(params.Z, axis=0)
-
-        m -= params.Z[self.row_idx]
-
-        non_singletons_idxs = np.atleast_1d(np.squeeze(np.where(m > 0)))
-
-        num_non_singleton = len(non_singletons_idxs)
-
-        K_new = num_non_singleton + num_singletons
-
-        Z_new = np.zeros((params.N, K_new), dtype=np.int64)
-
-        Z_new[:, :num_non_singleton] = params.Z[:, non_singletons_idxs]
-
-        Z_new[self.row_idx, num_non_singleton:] = 1
-
-        eta_new = np.zeros((params.D, K_new))
-
-        eta_new[:, :num_non_singleton] = params.eta[:, non_singletons_idxs]
-
-        eta_new[:, num_non_singleton:] = np.random.gamma(params.kappa, 1, size=(params.D, num_singletons))
-
-        return Parameters(
-            params.alpha,
-            params.kappa,
-            eta_new,
-            Z_new
-        )
 
 
 #=========================================================================
 # Container classes
 #=========================================================================
-def get_params_from_data(data, feat_alloc_prior):
-    D = data.shape[1]
-    N = data.shape[0]
-
-    Z = feat_alloc_prior.rvs(N)
-
-    K = Z.shape[1]
-
-    phi = np.random.dirichlet(np.ones(K), size=D)
-
-    return Parameters(1, 1, phi, Z)
-
-
-@numba.jitclass([
-    ('alpha', numba.float64),
-    ('kappa', numba.float64),
-    ('eta', numba.float64[:, :]),
-    ('Z', numba.int64[:, :])
-])
 class Parameters(object):
-    def __init__(self, alpha, kappa, eta, Z):
-        self.alpha = alpha
-
+    def __init__(self, kappa, eta, Z):
         self.kappa = kappa
 
         self.eta = eta
@@ -260,17 +240,73 @@ class Parameters(object):
         return self.Z.shape[0]
 
     def copy(self):
-        return Parameters(self.alpha, self.kappa, self.phi.copy(), self.Z.copy())
+        return Parameters(self.kappa, self.phi.copy(), self.Z.copy())
 
 
 class Priors(object):
-    def __init__(self, alpha=None, Z=None):
-        if alpha is None:
-            alpha = np.ones(2)
+    pass
 
-        self.alpha = alpha
 
-        if Z is None:
-            Z = np.ones(2)
+#=========================================================================
+# Singletons updaters
+#=========================================================================
+class PriorSingletonsUpdater(object):
+    def update_row(self, model, row_idx):
+        D = model.params.D
+        N = model.params.N
 
-        self.Z = Z
+        k_old = len(self._get_singleton_idxs(model.params.Z, row_idx))
+
+        k_new = model.feat_alloc_prior.sample_num_singletons(model.params.Z)
+
+        if (k_new == 0) and (k_old == 0):
+            return model.params
+
+        non_singleton_idxs = self._get_non_singleton_idxs(model.params.Z, row_idx)
+
+        num_non_singletons = len(non_singleton_idxs)
+
+        K_new = len(non_singleton_idxs) + k_new
+
+        eta_new = np.zeros((D, K_new))
+
+        eta_new[:, :num_non_singletons] = model.params.eta[:, non_singleton_idxs]
+
+        eta_new[:, num_non_singletons:] = np.random.gamma(1, 1, size=(D, k_new))
+
+        Z_new = np.zeros((N, K_new), dtype=np.int64)
+
+        Z_new[:, :num_non_singletons] = model.params.Z[:, non_singleton_idxs]
+
+        Z_new[row_idx, num_non_singletons:] = 1
+
+        params_new = Parameters(model.params.kappa, eta_new, Z_new)
+
+        log_p_new = model.data_dist.log_p_row(model.data, params_new, row_idx)
+
+        log_p_old = model.data_dist.log_p_row(model.data, model.params, row_idx)
+
+        if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, 0, 0):
+            params = params_new
+
+        else:
+            params = model.params
+
+        return params
+
+    def _get_column_counts(self, Z, row_idx):
+        m = np.sum(Z, axis=0)
+
+        m -= Z[row_idx]
+
+        return m
+
+    def _get_non_singleton_idxs(self, Z, row_idx):
+        m = self._get_column_counts(Z, row_idx)
+
+        return np.atleast_1d(np.squeeze(np.where(m > 0)))
+
+    def _get_singleton_idxs(self, Z, row_idx):
+        m = self._get_column_counts(Z, row_idx)
+
+        return np.atleast_1d(np.squeeze(np.where(m == 0)))
