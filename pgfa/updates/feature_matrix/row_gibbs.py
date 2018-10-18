@@ -1,5 +1,4 @@
 import itertools
-import numba
 import numpy as np
 
 from pgfa.math_utils import discrete_rvs, log_normalize
@@ -8,8 +7,10 @@ from .base import FeatureAllocationMatrixUpdater
 
 
 class RowGibbsUpdater(FeatureAllocationMatrixUpdater):
-    def __init__(self, max_cols=None):
+    def __init__(self, max_cols=None, singletons_updater=None):
         self.max_cols = max_cols
+
+        self.singletons_updater = singletons_updater
 
     def update_row(self, cols, data, dist, feat_probs, params, row_idx):
         max_cols = len(cols)
@@ -26,9 +27,9 @@ class RowGibbsUpdater(FeatureAllocationMatrixUpdater):
         Zs = np.array(Zs, dtype=np.int)
 
         return do_row_gibbs_update(
+            cols,
             data,
             dist,
-            cols,
             feat_probs,
             params,
             row_idx,
@@ -36,30 +37,23 @@ class RowGibbsUpdater(FeatureAllocationMatrixUpdater):
         )
 
 
-@numba.jit
-def do_row_gibbs_update(data, dist, cols, feat_probs, params, row_idx, Zs):
-    log_p1 = np.log(feat_probs)
+def do_row_gibbs_update(cols, data, dist, feat_probs, params, row_idx, Zs):
+    log_p1 = np.log(feat_probs[cols])
 
-    log_p0 = np.log(1 - feat_probs)
+    log_p0 = np.log(1 - feat_probs[cols])
 
     log_p = np.zeros(len(Zs))
 
-    z = np.ones(params.K)
-
     for idx in range(len(Zs)):
-        # Work around because Numba won't allow params.Z[row_idx, cols] = Zs[idx]
-        z[cols] = Zs[idx]
+        params.Z[row_idx] = Zs[idx]
 
-        params.Z[row_idx] = z
-
-        log_p[idx] = np.sum(Zs[idx] * log_p1) + np.sum((1 - Zs[idx]) * log_p0) + dist.log_p_row(data, params, row_idx)
+        log_p[idx] = np.sum(Zs[idx, cols] * log_p1) + np.sum((1 - Zs[idx, cols]) * log_p0) + \
+            dist.log_p_row(data, params, row_idx)
 
     log_p = log_normalize(log_p)
 
     idx = discrete_rvs(np.exp(log_p))
 
-    z[cols] = Zs[idx]
-
-    params.Z[row_idx] = z
+    params.Z[row_idx] = Zs[idx]
 
     return params
