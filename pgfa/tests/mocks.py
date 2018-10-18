@@ -3,12 +3,10 @@ Created on 25 Jan 2017
 
 @author: Andrew Roth
 '''
-import numba
 import numpy as np
 
 
-@numba.jitclass([])
-class MockDistribution(object):
+class MockDataDistribution(object):
     def __init__(self):
         pass
 
@@ -41,16 +39,9 @@ class MockFeatureAllocationPrior(object):
         return np.sum(Z) * np.log(self.p) + np.sum(1 - Z) * np.log(1 - self.p)
 
 
-@numba.jitclass([
-    ('Z', numba.int64[:, :])
-])
 class MockParams(object):
     def __init__(self, K, N):
-#         self.Z = np.random.randint(0, 2, size=(N, K))
-        
-#         self.Z = np.zeros((N, K), dtype=np.int64)
-
-        self.Z = np.ones((N, K), dtype=np.int64)
+        self.Z = np.random.randint(0, 2, size=(N, K))
 
     @property
     def K(self):
