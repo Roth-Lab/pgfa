@@ -222,7 +222,7 @@ class Parameters(object):
 
 
 class Priors(object):
-    def __init__(self, gamma=None, S=None, Z=None):
+    def __init__(self, gamma=None, S=None):
         if gamma is None:
             gamma = np.ones(2)
 
@@ -232,11 +232,6 @@ class Priors(object):
             S = np.ones(2)
 
         self.S = S
-
-        if Z is None:
-            Z = np.ones(2)
-
-        self.Z = Z
 
 
 #=========================================================================
@@ -331,48 +326,6 @@ class JointDistribution(object):
         log_p += scipy.stats.gamma.logpdf(1 / gamma, self.priors.gamma[0], scale=(1 / self.priors.gamma[1]))
 
         return log_p
-
-
-class SingletonsProposal(object):
-    def rvs(self, data, params, num_singletons, row_idx):
-        m = np.sum(params.Z, axis=0)
-
-        m -= params.Z[row_idx]
-
-        non_singletons_idxs = np.atleast_1d(np.squeeze(np.where(m > 0)))
-
-        num_non_singleton = len(non_singletons_idxs)
-
-        K_new = num_non_singleton + num_singletons
-
-        V_new = np.zeros((params.D, K_new))
-
-        Z_new = np.zeros((params.D, K_new), dtype=np.int64)
-
-        V_new[:, :num_non_singleton] = params.V[:, non_singletons_idxs]
-
-        Z_new[:, :num_non_singleton] = params.Z[:, non_singletons_idxs]
-
-        V_new[row_idx, num_non_singleton:] = np.random.normal(
-            0, 1, size=num_singletons) * (1 / np.sqrt(params.gamma))
-
-        Z_new[row_idx, num_non_singleton:] = 1
-
-        F_new = np.zeros((K_new, params.N))
-
-        new_params = Parameters(
-            params.gamma,
-            F_new,
-            params.S,
-            V_new,
-            Z_new
-        )
-
-        new_params = update_F(data, new_params)
-
-        new_params.F[:num_non_singleton] = params.F[non_singletons_idxs]
-
-        return new_params
 
 
 #=========================================================================
@@ -523,8 +476,6 @@ class CollapsedSingletonsUpdater(object):
                 eps = np.random.normal(0, 1, size=(k_new, N))
 
                 F_new[num_non_singletons:] = mean_new * E + np.linalg.solve(chol, eps)
-
-#                 F_new[num_non_singletons:] = np.random.normal(0, 1, size=(k_new, N))
 
                 V_new[:, num_non_singletons:] = v_new
 
