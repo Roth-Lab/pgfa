@@ -1,24 +1,22 @@
 import numpy as np
-import os
 
-from pgfa.feature_allocation_priors import BetaBernoulliFeatureAllocationDistribution
-from pgfa.models.nsfa import Parameters, NonparametricSparaseFactorAnalysisModel
-from pgfa.updates.feature_matrix import GibbsMixtureUpdater, ParticleGibbsUpdater
 from pgfa.utils import get_b_cubed_score
 
-os.environ['NUMBA_WARNINGS'] = '1'
+import pgfa.feature_allocation_priors
+import pgfa.models.nsfa
+import pgfa.updates.feature_matrix
 
 
 def main():
     np.random.seed(0)
 
-    num_iters = 100001
-    D = 10
-    K = 4
+    num_iters = 1001
+    D = 100
+    K = 5
     N_train = 1000
     N_test = 1000
 
-    feat_alloc_prior = BetaBernoulliFeatureAllocationDistribution(1, 1, K)
+    feat_alloc_prior = pgfa.feature_allocation_priors.BetaBernoulliFeatureAllocationDistribution(1, 1, K)
 
     params_train = get_test_params(feat_alloc_prior, N_train, D, seed=0)
 
@@ -28,18 +26,37 @@ def main():
 
     data_test = get_data(params_test)
 
-    feat_alloc_updater = ParticleGibbsUpdater(annealed=True)
+    singletons_updater = pgfa.models.nsfa.PriorSingletonsUpdater()
 
-    feat_alloc_updater = GibbsMixtureUpdater(feat_alloc_updater)
+    feat_alloc_updater = pgfa.updates.feature_matrix.GibbsMixtureUpdater(
+        pgfa.updates.feature_matrix.ParticleGibbsUpdater(annealed=True, singletons_updater=singletons_updater)
+    )
 
-    model = NonparametricSparaseFactorAnalysisModel(data_train, feat_alloc_prior, feat_alloc_updater)
+    feat_alloc_updater = pgfa.updates.feature_matrix.GibbsUpdater(singletons_updater=singletons_updater)
+
+    model_updater = pgfa.models.nsfa.NonparametricSparaseFactorAnalysisModelUpdater(feat_alloc_updater)
+
+    feat_alloc_prior = pgfa.feature_allocation_priors.IndianBuffetProcessDistribution()
+
+    model = pgfa.models.nsfa.NonparametricSparaseFactorAnalysisModel(data_train, feat_alloc_prior)
+
+    model.params.F = np.random.normal(0, 1, size=(1, N_train))
+
+    model.params.V = np.random.normal(0, 1, size=(D, 1))
+
+    model.params.Z = np.random.randint(0, 2, size=(D, 1))
+
+#     model.params = params_train.copy()
+
+    print(np.sum(params_train.Z, axis=0))
+
+    print('@' * 100)
 
     for i in range(num_iters):
         if i % 100 == 0:
             print(
                 i,
                 model.params.Z.shape[1],
-                model.params.alpha,
                 model.params.gamma,
                 model.log_p,
                 model.log_predictive_pdf(data_test),
@@ -53,7 +70,7 @@ def main():
 
             print('#' * 100)
 
-        model.update()
+        model_updater.update(model)
 
 
 def get_data(params):
@@ -70,8 +87,6 @@ def get_test_params(feat_alloc_prior, num_data_points, num_observed_dims, params
 
     D = num_observed_dims
     N = num_data_points
-
-    alpha = 2
 
     Z = feat_alloc_prior.rvs(D)
 
@@ -95,7 +110,7 @@ def get_test_params(feat_alloc_prior, num_data_points, num_observed_dims, params
 
         V = params.V.copy()
 
-    return Parameters(alpha, gamma, F, S, V, Z)
+    return pgfa.models.nsfa.Parameters(gamma, F, S, V, Z)
 
 
 def get_min_error(params_pred, params_true):
@@ -121,4 +136,18 @@ def get_min_error(params_pred, params_true):
 
 
 if __name__ == '__main__':
+#     import line_profiler
+#     import pgfa.updates.feature_matrix.particle_gibbs
+# 
+#     profiler = line_profiler.LineProfiler(
+#         pgfa.models.nsfa.NonparametricSparaseFactorAnalysisModelUpdater.update,
+#         pgfa.updates.feature_matrix.particle_gibbs.do_particle_gibbs_update,
+#         pgfa.updates.feature_matrix.particle_gibbs._propose_annealed,
+#         pgfa.updates.feature_matrix.particle_gibbs._log_target_pdf_annealed
+#     )
+# 
+#     profiler.run("main()")
+# 
+#     profiler.print_stats()
+
     main()

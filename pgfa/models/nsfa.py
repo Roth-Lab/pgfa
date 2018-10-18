@@ -4,23 +4,17 @@ import numba
 import scipy.linalg
 import scipy.stats
 
-from pgfa.math_utils import do_metropolis_hastings_accept_reject, ffa_rvs, ibp_rvs, log_ffa_pdf, log_ibp_pdf
-
-import pgfa.updates.feature_matrix
+from pgfa.math_utils import do_metropolis_hastings_accept_reject
 
 
 class NonparametricSparaseFactorAnalysisModel(object):
-    def __init__(self, data, feat_alloc_prior, feat_alloc_updater, params=None, priors=None):
+    def __init__(self, data, feat_alloc_prior, params=None, priors=None):
         self.data = data
-
-        self.feat_alloc_updater = feat_alloc_updater
 
         self.feat_alloc_prior = feat_alloc_prior
 
-        self.data_dist = DataDistribution()
-
         if params is None:
-            params = get_params_from_data(data, feat_alloc_prior)
+            params = self.get_params_from_data()
 
         self.params = params
 
@@ -29,50 +23,13 @@ class NonparametricSparaseFactorAnalysisModel(object):
 
         self.priors = priors
 
+        self.data_dist = DataDistribution()
+
+        self.joint_dist = JointDistribution(feat_alloc_prior, priors)
+
     @property
     def log_p(self):
-        params = self.params
-        priors = self.priors
-
-        alpha = params.alpha
-        gamma = params.gamma
-        F = params.F
-        S = params.S
-        Z = params.Z
-        V = params.V
-        W = params.W
-        X = self.data
-
-        log_p = 0
-
-        # Binary matrix prior
-        log_p += self.feat_alloc_prior.log_p(Z)
-
-        # Likelihood
-        for n in range(params.N):
-            log_p += scipy.stats.multivariate_normal.logpdf(
-                X[:, n], W @ F[:, n], np.diag(1 / S), allow_singular=True
-            )
-
-        # Common factors prior
-        log_p += np.sum(
-            scipy.stats.multivariate_normal.logpdf(V.T, np.zeros(params.D), (1 / gamma) * np.eye(params.D))
-        )
-
-        if params.K > 0:
-            # Factor loadings prior
-            log_p += np.sum(
-                scipy.stats.multivariate_normal.logpdf(F.T, np.zeros(params.K), np.eye(params.K))
-            )
-
-        # Noise covariance
-        log_p += np.sum(
-            scipy.stats.gamma.logpdf(S, priors.S[0], scale=(1 / priors.S[1]))
-        )
-
-        log_p += scipy.stats.gamma.logpdf(1 / gamma, priors.gamma[0], scale=(1 / priors.gamma[1]))
-
-        return log_p
+        return self.joint_dist.log_p(self.data, self.params)
 
     @property
     def rmse(self):
@@ -81,6 +38,26 @@ class NonparametricSparaseFactorAnalysisModel(object):
         X_pred = self.params.W @ self.params.F
 
         return np.sqrt(np.mean((X_true - X_pred)**2))
+
+    def get_params_from_data(self):
+        D = self.data.shape[0]
+        N = self.data.shape[1]
+
+        Z = self.feat_alloc_prior.rvs(D)
+
+        K = Z.shape[1]
+
+        F = np.random.normal(0, 1, size=(K, N))
+
+        S = np.ones(D)
+
+        if K == 0:
+            V = np.zeros((D, K))
+
+        else:
+            V = np.random.multivariate_normal(np.zeros(K), np.eye(K), size=D)
+
+        return Parameters(1, F, S, V, Z)
 
     def log_predictive_pdf(self, data):
         S = self.params.S
@@ -103,30 +80,27 @@ class NonparametricSparaseFactorAnalysisModel(object):
 
         return log_p
 
-    def update(self):
-        self.params = self.feat_alloc_updater.update(self.data, self.data_dist, self.feat_alloc_prior, self.params)
-
-        self.params = update_V(self.data, self.params)
-
-        if self.params.K > 0:
-            self.params = update_F(self.data, self.params)
-
-        self.params = update_gamma(self.params, self.priors)
-
-        self.params = update_S(self.data, self.params, self.priors)
-
 
 #=========================================================================
 # Updates
 #=========================================================================
-def update_alpha(params, priors):
-    a = priors.alpha[0] + params.K
+class NonparametricSparaseFactorAnalysisModelUpdater(object):
+    def __init__(self, feat_alloc_updater):
+        self.feat_alloc_updater = feat_alloc_updater
 
-    b = priors.alpha[1] + np.sum(1 / np.arange(1, params.D + 1))
+    def update(self, model):
+        self.feat_alloc_updater.update(model)
 
-    params.alpha = scipy.stats.gamma.rvs(a, scale=(1 / b))
+        model.params = update_V(model.data, model.params)
 
-    return params
+        if model.params.K > 0:
+            model.params = update_F(model.data, model.params)
+
+        model.params = update_gamma(model.params, model.priors)
+
+        model.params = update_S(model.data, model.params, model.priors)
+
+        model.feat_alloc_prior.update(model.params.Z)
 
 
 def update_gamma(params, priors):
@@ -146,18 +120,6 @@ def update_F(data, params):
 
     A = np.eye(params.K) + W.T @ S @ W
 
-#     A_inv = np.linalg.inv(A)
-#
-#     b = A_inv @ W.T @ S @ X
-#
-#     chol = np.linalg.cholesky(A_inv)
-#
-#     eps = np.random.normal(0, 1, size=(params.K, params.N))
-#
-#     params.F = b + chol @ eps
-#
-#     return params
-
     A_chol = scipy.linalg.cho_factor(A)
 
     b = scipy.linalg.cho_solve(A_chol, W.T @ S @ X)
@@ -170,8 +132,6 @@ def update_F(data, params):
 
 
 def update_S(data, params, priors):
-    S = np.zeros(params.D)
-
     F = params.F
     W = params.W
     X = data
@@ -182,6 +142,8 @@ def update_S(data, params, priors):
 
     b = priors.S[1] + 0.5 * np.sum(np.square(R), axis=1)
 
+    S = np.zeros(params.D)
+
     for d in range(params.D):
         S[d] = scipy.stats.gamma.rvs(a, scale=(1 / b[d]))
 
@@ -190,21 +152,25 @@ def update_S(data, params, priors):
     return params
 
 
-@numba.njit
 def update_V(data, params):
-    gamma = params.gamma
-    F = params.F
-    S = params.S
-    Z = params.Z
-    V = params.V
+    params.V = _update_V(data, params.gamma, params.F, params.S, params.V, params.Z)
+
+    return params
+
+
+@numba.njit(cache=True)
+def _update_V(data, gamma, F, S, V, Z):
     X = data
+
+    D = Z.shape[0]
+    K = Z.shape[1]
 
     FF = np.sum(np.square(F), axis=1)
 
-    for d in range(params.D):
+    for d in range(D):
         R = X[d] - (Z[d] * V[d]) @ F
 
-        for k in range(params.K):
+        for k in range(K):
             rk = R + Z[d, k] * V[d, k] * F[k]
 
             prec = gamma + Z[d, k] * S[d] * FF[k]
@@ -217,291 +183,14 @@ def update_V(data, params):
 
             R = rk - Z[d, k] * V[d, k] * F[k]
 
-    params.V = V
-
-    return params
-
-
-# def update_Z_singletons(data, params, row_idx):
-#     m = np.sum(params.Z, axis=0)
-#
-#     m -= params.Z[row_idx]
-#
-#     non_singletons_idxs = np.atleast_1d(np.squeeze(np.where(m > 0)))
-#
-#     singletons_idxs = np.atleast_1d(np.squeeze(np.where(m == 0)))
-#
-#     num_non_singleton = len(non_singletons_idxs)
-#
-#     e = data[row_idx] - params.V[row_idx, non_singletons_idxs] @ params.F[non_singletons_idxs]
-#
-#     e = np.atleast_2d(e)
-#
-#     assert e.shape == (1, params.N)
-#
-#     s = params.S[row_idx]
-#
-#     k_old = len(singletons_idxs)
-#
-#     v_old = params.V[row_idx, singletons_idxs]
-#
-#     v_old = np.atleast_2d(v_old).T
-#
-#     assert v_old.shape == (k_old, 1)
-#
-#     log_p_old = get_log_p_singleton(e, k_old, s, v_old)
-#
-#     k_new = np.random.poisson(params.alpha / params.D)
-#
-#     v_new = np.random.normal(0, 1, size=(k_new, 1)) * (1 / np.sqrt(params.gamma))
-#
-#     assert v_new.shape == (k_new, 1)
-#
-#     log_p_new = get_log_p_singleton(e, k_new, s, v_new)
-#
-#     if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, 0, 0):
-# #         print(log_p_new, log_p_old, k_new, k_old)
-#         K_new = num_non_singleton + k_new
-#
-#         F = np.zeros((K_new, params.N))
-#         V = np.zeros((params.D, K_new))
-#         Z = np.zeros((params.D, K_new), dtype=np.int64)
-#
-#         F[:num_non_singleton] = params.F[non_singletons_idxs]
-#         V[:, :num_non_singleton] = params.V[:, non_singletons_idxs]
-#         Z[:, :num_non_singleton] = params.Z[:, non_singletons_idxs]
-#
-#         if k_new > 0:
-#             F[num_non_singleton:] = get_F_singleton(e, k_new, s, v_new)
-#             V[:, num_non_singleton:] = np.random.normal(0, 1, size=(params.D, k_new)) * (1 / np.sqrt(params.gamma))
-#             V[row_idx, num_non_singleton:] = np.squeeze(v_new)
-#             Z[row_idx, num_non_singleton:] = 1
-#
-#         # Update V from posterior
-#         e = data[row_idx] - Z[row_idx] * V[row_idx] @ F
-#
-#         e = np.atleast_2d(e)
-#
-#         assert e.shape == (1, params.N)
-#
-#         FF = np.sum(np.square(F), axis=1)
-#
-#         for k in range(num_non_singleton, K_new):
-#             ek = e + V[row_idx, k] * F[k]
-#
-#             prec = params.gamma + s * FF[k]
-#
-#             mean = (s / prec) * F[k] @ ek.T
-#
-#             std = 1 / np.sqrt(prec)
-#
-#             V[row_idx, k] = np.random.normal(mean, std)
-#
-#         params = Parameters(
-#             params.alpha,
-#             params.gamma,
-#             F,
-#             params.S,
-#             V,
-#             Z
-#         )
-#
-#     return params
-def update_Z_singletons(data, params, row_idx):
-    params_old = params
-    singletons_idxs = get_singletons_idxs(params_old, row_idx)
-    k_old = len(singletons_idxs)
-    v_old = params_old.V[row_idx, singletons_idxs]
-
-    log_p_old = 0
-    log_p_old += log_likelihood(data, params_old)
-    log_p_old += np.sum(scipy.stats.norm.logpdf(v_old, np.zeros(k_old), (1 / params.gamma) * np.eye(k_old)))
-    log_q_old = get_log_p_F_singleton(data, params_old, row_idx)
-
-    k_new = np.random.poisson(params.alpha / params.D)
-    params_new = propose_new_params(data, k_new, params, row_idx)
-    singletons_idxs = get_singletons_idxs(params_new, row_idx)
-    v_new = params_new.V[row_idx, singletons_idxs]
-
-    log_p_new = 0
-    log_p_new += log_likelihood(data, params_new)
-    log_p_new += np.sum(scipy.stats.norm.logpdf(v_new, np.zeros(k_new), (1 / params.gamma) * np.eye(k_new)))
-    log_q_new = get_log_p_F_singleton(data, params_new, row_idx)
-
-    if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, log_q_new, log_q_old):
-        params = params_new
-
-    else:
-        params = params_old
-
-    return params
-
-
-def propose_new_params(data, k_new, params, row_idx):
-    non_singletons_idxs = get_non_singletons_idxs(params, row_idx)
-
-    num_non_singleton = len(non_singletons_idxs)
-
-    K_new = num_non_singleton + k_new
-
-    V = np.zeros((params.D, K_new))
-    V[:, :num_non_singleton] = params.V[:, non_singletons_idxs]
-    V[:, num_non_singleton:] = np.random.normal(0, 1, size=(params.D, k_new)) * (1 / np.sqrt(params.gamma))
-
-    Z = np.zeros((params.D, K_new), dtype=np.int64)
-    Z[:, :num_non_singleton] = params.Z[:, non_singletons_idxs]
-    Z[row_idx, num_non_singleton:] = 1
-
-    F = np.zeros((K_new, params.N))
-    F[:num_non_singleton] = params.F[non_singletons_idxs]
-
-    params = Parameters(
-        params.alpha,
-        params.gamma,
-        F,
-        params.S,
-        V,
-        Z
-    )
-
-    params.F[num_non_singleton:] = get_F_singleton(data, params, row_idx)
-
-    return params
-
-
-def get_non_singletons_idxs(params, row_idx):
-    m = np.sum(params.Z, axis=0)
-
-    m -= params.Z[row_idx]
-
-    return np.atleast_1d(np.squeeze(np.where(m > 0)))
-
-
-def get_singletons_idxs(params, row_idx):
-    m = np.sum(params.Z, axis=0)
-
-    m -= params.Z[row_idx]
-
-    return np.atleast_1d(np.squeeze(np.where(m == 0)))
-
-
-def get_log_p_singleton(e, k, s, v):
-    """
-    Parameters
-    ----------
-    e: ndarray (1xN)
-    k: int
-    s: float
-    v: ndarray (Kx1)
-    """
-    N = len(e)
-
-    prec = s * (v @ v.T) + np.eye(k)
-
-    mean = s * np.linalg.solve(prec, v) @ e
-
-    log_p = 0
-
-    log_p -= 0.5 * N * np.linalg.slogdet(prec)[1]
-
-    log_p += 0.5 * np.sum(mean.T @ prec @ mean)
-
-    return log_p
-
-
-def get_F_singleton(data, params, row_idx):
-    non_singletons_idxs = get_non_singletons_idxs(params, row_idx)
-
-    singleton_idxs = get_singletons_idxs(params, row_idx)
-
-    k = len(singleton_idxs)
-
-    e = data[row_idx] - params.V[row_idx, non_singletons_idxs] @ params.F[non_singletons_idxs]
-    e = np.atleast_2d(e)
-
-    s = params.S[row_idx]
-
-    v = params.V[row_idx, singleton_idxs].reshape((k, 1))
-
-    prec = s * (v @ v.T) + np.eye(k)
-
-    mean = s * np.linalg.solve(prec, v) @ e
-
-    chol = np.linalg.cholesky(prec)
-
-    eps = np.random.normal(0, 1, size=(k, params.N))
-
-    F = mean + np.linalg.solve(chol, eps)
-
-    return F
-
-
-def get_log_p_F_singleton(data, params, row_idx):
-    non_singletons_idxs = get_non_singletons_idxs(params, row_idx)
-
-    singleton_idxs = get_singletons_idxs(params, row_idx)
-
-    k = len(singleton_idxs)
-
-    e = data[row_idx] - params.V[row_idx, non_singletons_idxs] @ params.F[non_singletons_idxs]
-    e = np.atleast_2d(e)
-
-    s = params.S[row_idx]
-
-    v = params.V[row_idx, singleton_idxs].reshape((k, 1))
-
-    f = params.F[singleton_idxs]
-
-    prec = s * (v @ v.T) + np.eye(k)
-
-    mean = s * np.linalg.solve(prec, v) @ e
-
-    diff = (f - mean)
-
-    log_p = 0
-    log_p += 0.5 * np.linalg.slogdet(prec)[1]
-    for n in range(params.N):
-        log_p -= 0.5 * diff[:, n].T @ prec @ diff[:, n]
-
-    return log_p
+    return V
 
 
 #=========================================================================
 # Container classes
 #=========================================================================
-def get_params_from_data(data, feat_alloc_prior):
-    D = data.shape[0]
-    N = data.shape[1]
-
-    Z = feat_alloc_prior.rvs(D)
-
-    K = Z.shape[1]
-
-    F = np.random.normal(0, 1, size=(K, N))
-
-    S = np.ones(D)
-
-    if K == 0:
-        V = np.zeros((D, K))
-
-    else:
-        V = np.random.multivariate_normal(np.zeros(K), np.eye(K), size=D)
-
-    return Parameters(1, 1, F, S, V, Z)
-
-
-@numba.jitclass([
-    ('alpha', numba.float64),
-    ('gamma', numba.float64),
-    ('F', numba.float64[:, :]),
-    ('S', numba.float64[:]),
-    ('V', numba.float64[:, :]),
-    ('Z', numba.int64[:, :])
-])
 class Parameters(object):
-    def __init__(self, alpha, gamma, F, S, V, Z):
-        self.alpha = alpha
-
+    def __init__(self, gamma, F, S, V, Z):
         self.gamma = gamma
 
         self.F = F
@@ -529,16 +218,11 @@ class Parameters(object):
         return self.Z * self.V
 
     def copy(self):
-        return Parameters(self.alpha, self.gamma, self.F.copy(), self.S.copy(), self.V.copy(), self.Z.copy())
+        return Parameters(self.gamma, self.F.copy(), self.S.copy(), self.V.copy(), self.Z.copy())
 
 
 class Priors(object):
-    def __init__(self, alpha=None, gamma=None, S=None, Z=None):
-        if alpha is None:
-            alpha = np.ones(2)
-
-        self.alpha = alpha
-
+    def __init__(self, gamma=None, S=None, Z=None):
         if gamma is None:
             gamma = np.ones(2)
 
@@ -558,101 +242,114 @@ class Priors(object):
 #=========================================================================
 # Densities and proposals
 #=========================================================================
-@numba.jitclass([])
 class DataDistribution(object):
     def __init__(self):
         pass
 
     def log_p(self, data, params):
+        D = params.D
+        N = params.N
+        F = params.F
+        S = params.S
+        W = params.W
+        X = data
+
+        diff = X - (W @ F)
+
         log_p = 0
 
-        for row_idx in range(params.N):
-            log_p += self.log_p_row(data, params, row_idx)
+        log_p += 0.5 * N * (np.log(np.prod(S)) - D * np.log(2 * np.pi))
+
+        log_p -= 0.5 * np.sum(S[:, np.newaxis] * np.square(diff))
 
         return log_p
 
     def log_p_row(self, data, params, row_idx):
-        log_p = 0
+        N = params.N
+        F = params.F
+        S = params.S
+        V = params.V
+        Z = params.Z
+        X = data
 
-        w = params.Z[row_idx] * params.V[row_idx]
+        return log_p_row(F, N, S, X, V, Z, row_idx)
+#
+#         w = Z[row_idx] * V[row_idx]
+#
+#         diff = (X[row_idx] - w @ F)
+#
+#         log_p = 0
+#
+#         log_p += 0.5 * N * (np.log(S[row_idx]) - np.log(2 * np.pi))
+#
+#         log_p -= 0.5 * np.sum(S[row_idx] * np.square(diff))
+#
+#         return log_p
 
-        for n in range(params.N):
-            f = params.F[:, n]
 
-            mean = np.sum(w * f)
+@numba.njit(cache=True)
+def log_p_row(F, N, S, X, V, Z, row_idx):
+    w = Z[row_idx] * V[row_idx]
 
-            log_p += log_normal_likelihood(
-                data[row_idx, n], mean, params.S[row_idx]
-            )
+    diff = (X[row_idx] - w @ F)
 
-        return log_p
-
-
-@numba.njit
-def log_likelihood(data, params):
     log_p = 0
 
-    mean = params.W @ params.F
+    log_p += 0.5 * N * (np.log(S[row_idx]) - np.log(2 * np.pi))
 
-    for d in range(params.D):
-        prec = params.S[d]
-
-        for n in range(params.N):
-            log_p += log_normal_likelihood(data[d, n], mean[d, n], prec)
+    log_p -= 0.5 * np.sum(S[row_idx] * np.square(diff))
 
     return log_p
 
 
-@numba.njit
-def log_normal_likelihood(x, mean, prec):
-    return -0.5 * prec * (x - mean)**2
+class JointDistribution(object):
+    def __init__(self, feat_alloc_prior, priors):
+        self.data_dist = DataDistribution()
 
+        self.feat_alloc_prior = feat_alloc_prior
 
-class CollapsedDensity(object):
-    def __init__(self, row_idx):
-        self.row_idx = row_idx
+        self.priors = priors
 
     def log_p(self, data, params):
-        m = np.sum(params.Z, axis=0)
-
-        m -= params.Z[self.row_idx]
-
-        non_singletons_idxs = np.atleast_1d(np.squeeze(np.where(m > 0)))
-
-        singletons_idxs = np.atleast_1d(np.squeeze(np.where(m == 0)))
-
-        k = len(singletons_idxs)
-
-        if k == 0:
-            return 0
-
-        w = params.Z[self.row_idx, non_singletons_idxs] * params.V[self.row_idx, non_singletons_idxs]
-
-        r = data[self.row_idx] - w @ params.F[non_singletons_idxs]
-
-        s = params.S[self.row_idx]
-
-        v = params.V[self.row_idx, singletons_idxs]
-
-        M = s * v @ v.T + np.eye(k)
-
-        m = s * np.linalg.solve(M, v)[:, np.newaxis] * r[np.newaxis, :]
+        gamma = params.gamma
+        F = params.F
+        S = params.S
+        V = params.V
 
         log_p = 0
-        log_p -= 0.5 * params.N * np.log(np.linalg.det(M))
-        log_p += 0.5 * np.trace(m.T @ M @ m)
+
+        # Binary matrix prior
+        log_p += self.feat_alloc_prior.log_p(params.Z)
+
+        # Data
+        log_p += self.data_dist.log_p(data, params)
+
+        # Common factors prior
+        log_p += np.sum(
+            scipy.stats.multivariate_normal.logpdf(V.T, np.zeros(params.D), (1 / gamma) * np.eye(params.D))
+        )
+
+        if params.K > 0:
+            # Factor loadings prior
+            log_p += np.sum(
+                scipy.stats.multivariate_normal.logpdf(F.T, np.zeros(params.K), np.eye(params.K))
+            )
+
+        # Noise covariance
+        log_p += np.sum(
+            scipy.stats.gamma.logpdf(S, self.priors.S[0], scale=(1 / self.priors.S[1]))
+        )
+
+        log_p += scipy.stats.gamma.logpdf(1 / gamma, self.priors.gamma[0], scale=(1 / self.priors.gamma[1]))
 
         return log_p
 
 
-class Proposal(object):
-    def __init__(self, row_idx):
-        self.row_idx = row_idx
-
-    def rvs(self, data, params, num_singletons):
+class SingletonsProposal(object):
+    def rvs(self, data, params, num_singletons, row_idx):
         m = np.sum(params.Z, axis=0)
 
-        m -= params.Z[self.row_idx]
+        m -= params.Z[row_idx]
 
         non_singletons_idxs = np.atleast_1d(np.squeeze(np.where(m > 0)))
 
@@ -668,15 +365,14 @@ class Proposal(object):
 
         Z_new[:, :num_non_singleton] = params.Z[:, non_singletons_idxs]
 
-        V_new[self.row_idx, num_non_singleton:] = np.random.normal(
+        V_new[row_idx, num_non_singleton:] = np.random.normal(
             0, 1, size=num_singletons) * (1 / np.sqrt(params.gamma))
 
-        Z_new[self.row_idx, num_non_singleton:] = 1
+        Z_new[row_idx, num_non_singleton:] = 1
 
         F_new = np.zeros((K_new, params.N))
 
         new_params = Parameters(
-            params.alpha,
             params.gamma,
             F_new,
             params.S,
@@ -692,10 +388,344 @@ class Proposal(object):
 
 
 #=========================================================================
+# Singletons updaters
+#=========================================================================
+class PriorSingletonsUpdater(object):
+    def update_row(self, model, row_idx):
+        D = model.params.D
+        N = model.params.N
+        gamma = model.params.gamma
+        S = model.params.S
+
+        k_old = len(get_singletons_idxs(model.params.Z, row_idx))
+
+        k_new = model.feat_alloc_prior.sample_num_singletons(model.params.Z)
+
+        if (k_new == 0) and (k_old == 0):
+            return model.params
+
+        non_singleton_idxs = get_non_singletons_idxs(model.params.Z, row_idx)
+
+        num_non_singletons = len(non_singleton_idxs)
+
+        K_new = num_non_singletons + k_new
+
+        F_new = np.zeros((K_new, N))
+
+        F_new[:num_non_singletons] = model.params.F[non_singleton_idxs]
+
+        F_new[num_non_singletons:] = np.random.normal(0, 1, size=(k_new, N))
+
+        V_new = np.zeros((D, K_new))
+
+        V_new[:, :num_non_singletons] = model.params.V[:, non_singleton_idxs]
+
+        V_new[:, num_non_singletons:] = np.random.multivariate_normal(
+            np.zeros(D), (1 / gamma) * np.eye(D), size=k_new
+        ).T
+
+        Z_new = np.zeros((D, K_new), dtype=np.int64)
+
+        Z_new[:, :num_non_singletons] = model.params.Z[:, non_singleton_idxs]
+
+        Z_new[row_idx, num_non_singletons:] = 1
+
+        params_new = Parameters(gamma, F_new, S, V_new, Z_new)
+
+        log_p_new = model.data_dist.log_p_row(model.data, params_new, row_idx)
+
+        log_p_old = model.data_dist.log_p_row(model.data, model.params, row_idx)
+
+        diff = log_p_new - log_p_old
+
+        if diff > np.log(np.random.rand()):
+            params = params_new
+
+        else:
+            params = model.params
+
+        return params
+
+
+class MetropolisHastingsSingletonsUpdater(object):
+    def update_row(self, model, row_idx):
+        data = model.data
+        params = model.params
+
+        # Old
+        params_old = params
+
+        singletons_idxs = get_singletons_idxs(params_old, row_idx)
+
+        k_old = len(singletons_idxs)
+
+        v_old = params_old.V[row_idx, singletons_idxs]
+
+        log_p_old = 0
+
+        log_p_old += log_likelihood(data, params_old)
+
+        log_p_old += np.sum(scipy.stats.norm.logpdf(v_old, np.zeros(k_old), (1 / params.gamma) * np.eye(k_old)))
+
+        log_q_old = self._get_log_p_F_singleton(data, params_old, row_idx)
+
+        # New
+        k_new = np.random.poisson(params.alpha / params.D)
+
+        params_new = self._propose_new_params(data, k_new, params, row_idx)
+
+        singletons_idxs = get_singletons_idxs(params_new, row_idx)
+
+        v_new = params_new.V[row_idx, singletons_idxs]
+
+        log_p_new = 0
+
+        log_p_new += log_likelihood(data, params_new)
+
+        log_p_new += np.sum(scipy.stats.norm.logpdf(v_new, np.zeros(k_new), (1 / params.gamma) * np.eye(k_new)))
+
+        log_q_new = self._get_log_p_F_singleton(data, params_new, row_idx)
+
+        if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, log_q_new, log_q_old):
+            params = params_new
+
+        else:
+            params = params_old
+
+        return params
+
+    def _get_F_singleton(self, data, params, row_idx):
+        non_singletons_idxs = get_non_singletons_idxs(params, row_idx)
+
+        singleton_idxs = get_singletons_idxs(params, row_idx)
+
+        k = len(singleton_idxs)
+
+        e = data[row_idx] - params.V[row_idx, non_singletons_idxs] @ params.F[non_singletons_idxs]
+
+        e = np.atleast_2d(e)
+
+        s = params.S[row_idx]
+
+        v = params.V[row_idx, singleton_idxs].reshape((k, 1))
+
+        prec = s * (v @ v.T) + np.eye(k)
+
+        mean = s * np.linalg.solve(prec, v) @ e
+
+        chol = np.linalg.cholesky(prec)
+
+        eps = np.random.normal(0, 1, size=(k, params.N))
+
+        F = mean + np.linalg.solve(chol, eps)
+
+        return F
+
+    def _get_log_p_F_singleton(self, data, params, row_idx):
+        non_singletons_idxs = get_non_singletons_idxs(params, row_idx)
+
+        singleton_idxs = get_singletons_idxs(params, row_idx)
+
+        k = len(singleton_idxs)
+
+        e = data[row_idx] - params.V[row_idx, non_singletons_idxs] @ params.F[non_singletons_idxs]
+
+        e = np.atleast_2d(e)
+
+        s = params.S[row_idx]
+
+        v = params.V[row_idx, singleton_idxs].reshape((k, 1))
+
+        f = params.F[singleton_idxs]
+
+        prec = s * (v @ v.T) + np.eye(k)
+
+        mean = s * np.linalg.solve(prec, v) @ e
+
+        diff = (f - mean)
+
+        log_p = 0
+
+        log_p += 0.5 * np.linalg.slogdet(prec)[1]
+
+        for n in range(params.N):
+            log_p -= 0.5 * diff[:, n].T @ prec @ diff[:, n]
+
+        return log_p
+
+    def _propose_new_params(self, data, k_new, params, row_idx):
+        non_singletons_idxs = get_non_singletons_idxs(params, row_idx)
+
+        num_non_singleton = len(non_singletons_idxs)
+
+        K_new = num_non_singleton + k_new
+
+        # V
+        V = np.zeros((params.D, K_new))
+
+        V[:, :num_non_singleton] = params.V[:, non_singletons_idxs]
+
+        V[:, num_non_singleton:] = np.random.normal(0, 1, size=(params.D, k_new)) * (1 / np.sqrt(params.gamma))
+
+        # Z
+        Z = np.zeros((params.D, K_new), dtype=np.int64)
+
+        Z[:, :num_non_singleton] = params.Z[:, non_singletons_idxs]
+
+        Z[row_idx, num_non_singleton:] = 1
+
+        # F
+        F = np.zeros((K_new, params.N))
+
+        F[:num_non_singleton] = params.F[non_singletons_idxs]
+
+        params = Parameters(
+            params.alpha,
+            params.gamma,
+            F,
+            params.S,
+            V,
+            Z
+        )
+
+        params.F[num_non_singleton:] = self._get_F_singleton(data, params, row_idx)
+
+        return params
+
+
+class CollapsedSingletonsUpdater(object):
+    def update_Z_singletons(self, model, row_idx):
+        data = model.data
+        params = model.params
+
+        m = np.sum(params.Z, axis=0)
+
+        m -= params.Z[row_idx]
+
+        non_singletons_idxs = np.atleast_1d(np.squeeze(np.where(m > 0)))
+
+        singletons_idxs = np.atleast_1d(np.squeeze(np.where(m == 0)))
+
+        num_non_singleton = len(non_singletons_idxs)
+
+        e = data[row_idx] - params.V[row_idx, non_singletons_idxs] @ params.F[non_singletons_idxs]
+
+        e = np.atleast_2d(e)
+
+        assert e.shape == (1, params.N)
+
+        s = params.S[row_idx]
+
+        k_old = len(singletons_idxs)
+
+        v_old = params.V[row_idx, singletons_idxs]
+
+        v_old = np.atleast_2d(v_old).T
+
+        assert v_old.shape == (k_old, 1)
+
+        log_p_old = self._get_log_p_singleton(e, k_old, s, v_old)
+
+        k_new = np.random.poisson(params.alpha / params.D)
+
+        v_new = np.random.normal(0, 1, size=(k_new, 1)) * (1 / np.sqrt(params.gamma))
+
+        assert v_new.shape == (k_new, 1)
+
+        log_p_new = self._get_log_p_singleton(e, k_new, s, v_new)
+
+        if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, 0, 0):
+            #         print(log_p_new, log_p_old, k_new, k_old)
+            K_new = num_non_singleton + k_new
+
+            F = np.zeros((K_new, params.N))
+            V = np.zeros((params.D, K_new))
+            Z = np.zeros((params.D, K_new), dtype=np.int64)
+
+            F[:num_non_singleton] = params.F[non_singletons_idxs]
+            V[:, :num_non_singleton] = params.V[:, non_singletons_idxs]
+            Z[:, :num_non_singleton] = params.Z[:, non_singletons_idxs]
+
+            if k_new > 0:
+                F[num_non_singleton:] = self._get_F_singleton(e, k_new, s, v_new)
+                V[:, num_non_singleton:] = np.random.normal(0, 1, size=(params.D, k_new)) * (1 / np.sqrt(params.gamma))
+                V[row_idx, num_non_singleton:] = np.squeeze(v_new)
+                Z[row_idx, num_non_singleton:] = 1
+
+            # Update V from posterior
+            e = data[row_idx] - Z[row_idx] * V[row_idx] @ F
+
+            e = np.atleast_2d(e)
+
+            assert e.shape == (1, params.N)
+
+            FF = np.sum(np.square(F), axis=1)
+
+            for k in range(num_non_singleton, K_new):
+                ek = e + V[row_idx, k] * F[k]
+
+                prec = params.gamma + s * FF[k]
+
+                mean = (s / prec) * F[k] @ ek.T
+
+                std = 1 / np.sqrt(prec)
+
+                V[row_idx, k] = np.random.normal(mean, std)
+
+            params = Parameters(
+                params.alpha,
+                params.gamma,
+                F,
+                params.S,
+                V,
+                Z
+            )
+
+        return params
+
+    def _get_log_p_singleton(self, e, k, s, v):
+        """
+        Parameters
+        ----------
+        e: ndarray (1xN)
+        k: int
+        s: float
+        v: ndarray (Kx1)
+        """
+        N = len(e)
+
+        prec = s * (v @ v.T) + np.eye(k)
+
+        mean = s * np.linalg.solve(prec, v) @ e
+
+        log_p = 0
+
+        log_p -= 0.5 * N * np.linalg.slogdet(prec)[1]
+
+        log_p += 0.5 * np.sum(mean.T @ prec @ mean)
+
+        return log_p
+
+
+def get_non_singletons_idxs(Z, row_idx):
+    m = np.sum(Z, axis=0)
+
+    m -= Z[row_idx]
+
+    return np.atleast_1d(np.squeeze(np.where(m > 0)))
+
+
+def get_singletons_idxs(Z, row_idx):
+    m = np.sum(Z, axis=0)
+
+    m -= Z[row_idx]
+
+    return np.atleast_1d(np.squeeze(np.where(m == 0)))
+
+
+#=========================================================================
 # Benchmark utils
 #=========================================================================
-
-
 def get_rmse(data, params):
     X_true = data
 
