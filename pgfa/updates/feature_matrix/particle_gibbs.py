@@ -30,7 +30,6 @@ class ParticleGibbsUpdater(FeatureAllocationMatrixUpdater):
         )
 
 
-@numba.jit
 def do_particle_gibbs_update(
         cols,
         data,
@@ -104,10 +103,8 @@ def do_particle_gibbs_update(
     return params
 
 
-@numba.jit
-def _log_target_pdf_annealed(cols, data, dist, feat_probs, params, row_idx, z, T):
-    params.Z[row_idx] = z
-
+@numba.njit(cache=True)
+def _log_target_pdf_annealed(cols, feat_probs, log_p_x, z, T):
     t = len(cols)
 
     log_p = 0
@@ -117,22 +114,31 @@ def _log_target_pdf_annealed(cols, data, dist, feat_probs, params, row_idx, z, T
     log_p += np.sum((1 - z[cols]) * np.log(1 - feat_probs[cols]))
 
     if t > 1:
-        log_p += ((t - 1) / (T - 1)) * dist.log_p_row(data, params, row_idx)
+        log_p += ((t - 1) / (T - 1)) * log_p_x
 
     return log_p
 
 
-@numba.jit
 def _propose_annealed(cols, data, dist, feat_probs, params, row_idx, z, T, idx=-1):
+    cols = np.array(cols, dtype=np.int64)
+
     log_p = np.zeros(2)
 
     z[cols[-1]] = 0
 
-    log_p[0] = _log_target_pdf_annealed(cols, data, dist, feat_probs, params, row_idx, z, T)
+    params.Z[row_idx] = z
+
+    log_p_x = dist.log_p_row(data, params, row_idx)
+
+    log_p[0] = _log_target_pdf_annealed(cols, feat_probs, log_p_x, z, T)
 
     z[cols[-1]] = 1
 
-    log_p[1] = _log_target_pdf_annealed(cols, data, dist, feat_probs, params, row_idx, z, T)
+    params.Z[row_idx] = z
+
+    log_p_x = dist.log_p_row(data, params, row_idx)
+
+    log_p[1] = _log_target_pdf_annealed(cols, feat_probs, log_p_x, z, T)
 
     log_norm = log_sum_exp(log_p)
 
@@ -148,7 +154,6 @@ def _propose_annealed(cols, data, dist, feat_probs, params, row_idx, z, T, idx=-
     return idx, log_p[idx], log_norm
 
 
-@numba.jit
 def _log_target_pdf(cols, data, dist, feat_probs, params, row_idx, z):
     params.Z[row_idx] = z
 
@@ -163,7 +168,6 @@ def _log_target_pdf(cols, data, dist, feat_probs, params, row_idx, z):
     return log_p
 
 
-@numba.jit
 def _propose(cols, data, dist, feat_probs, params, row_idx, z, idx=-1):
     log_p = np.zeros(2)
 
@@ -189,14 +193,12 @@ def _propose(cols, data, dist, feat_probs, params, row_idx, z, idx=-1):
     return idx, log_p[idx], log_norm
 
 
-@numba.jit
 def _get_ess(log_W):
     W = np.exp(log_W)
 
     return 1 / np.sum(np.square(W))
 
 
-@numba.jit
 def _resample(log_W, particles, conditional=True, threshold=0.5):
     num_features = len(log_W)
 
