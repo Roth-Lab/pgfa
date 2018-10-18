@@ -7,7 +7,7 @@ def bernoulli_rvs(p):
     return discrete_rvs(np.array([1 - p, p]))
 
 
-@numba.njit
+@numba.njit(cache=True)
 def discrete_rvs(p):
     p = p / np.sum(p)
     P = np.cumsum(p)
@@ -44,7 +44,7 @@ def log_gamma(x):
     return np.math.lgamma(x)
 
 
-@numba.jit(nopython=True)
+@numba.jit(cache=True, nopython=True)
 def log_sum_exp(log_X):
     max_exp = np.max(log_X)
 
@@ -59,7 +59,7 @@ def log_sum_exp(log_X):
     return np.log(total) + max_exp
 
 
-@numba.jit(nopython=True)
+@numba.jit(cache=True, nopython=True)
 def log_normalize(log_p):
     return log_p - log_sum_exp(log_p)
 
