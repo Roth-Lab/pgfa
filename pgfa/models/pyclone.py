@@ -78,30 +78,6 @@ def update_eta(data, params):
                 params_new.eta[d, k] = params_old.eta[d, k]
 
     return params_new
-#
-# def update_eta(data, params):
-#     params_old = params
-#
-#     params_new = params.copy()
-#
-#     density = FullDensity()
-#
-#     for d in range(params.D):
-#         params_new.eta[d] = np.random.dirichlet(params_old.eta[d] + 1e-6)
-#
-#         log_p_old = density.log_p(data, params_old)
-#
-#         log_p_new = density.log_p(data, params_new)
-#
-#         u = np.random.rand()
-#
-#         if np.log(u) <= (log_p_new - log_p_old):
-#             params_old.eta[d] = params_new.eta[d]
-#
-#         else:
-#             params_new.eta[d] = params_old.eta[d]
-#
-#     return params_new
 
 
 #=========================================================================
