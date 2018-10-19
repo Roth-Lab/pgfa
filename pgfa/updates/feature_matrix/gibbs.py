@@ -1,4 +1,3 @@
-import numba
 import numpy as np
 
 from pgfa.math_utils import discrete_rvs, log_normalize
