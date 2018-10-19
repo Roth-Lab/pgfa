@@ -5,21 +5,21 @@ from pgfa.utils import get_b_cubed_score
 
 import pgfa.feature_allocation_priors
 import pgfa.models.linear_gaussian
-import pgfa.updates.feature_matrix
+import pgfa.updates
 
 
 def main():
     np.random.seed(0)
 
-    num_iters = 1000
+    num_iters = 10001
     D = 10
     K = None
     N = 100
 
-    data, data_true, params = simulate_data(D, N, K=2, tau_v=0.1, tau_x=10)
+    data, data_true, params = simulate_data(D, N, K=K, tau_v=1, tau_x=1)
 
     model_updater = get_model_updater(
-        collapsed_singletons=True, feat_alloc_updater_type='rg', ibp=(K is None), mixed_updates=False
+        collapsed_singletons=False, feat_alloc_updater_type='g', ibp=(K is None), mixed_updates=True
     )
 
     model = get_model(data, K=K)
@@ -71,23 +71,23 @@ def get_model_updater(collapsed_singletons=False, feat_alloc_updater_type='g', i
         singletons_updater = None
 
     if feat_alloc_updater_type == 'g':
-        feat_alloc_updater = pgfa.updates.feature_matrix.GibbsUpdater(singletons_updater=singletons_updater)
+        feat_alloc_updater = pgfa.updates.GibbsUpdater(singletons_updater=singletons_updater)
 
     elif feat_alloc_updater_type == 'pg':
-        feat_alloc_updater = pgfa.updates.feature_matrix.ParticleGibbsUpdater(
+        feat_alloc_updater = pgfa.updates.ParticleGibbsUpdater(
             annealed=False, num_particles=10, singletons_updater=singletons_updater
         )
 
     elif feat_alloc_updater_type == 'pga':
-        feat_alloc_updater = pgfa.updates.feature_matrix.ParticleGibbsUpdater(
+        feat_alloc_updater = pgfa.updates.ParticleGibbsUpdater(
             annealed=True, num_particles=10, singletons_updater=singletons_updater
         )
 
     elif feat_alloc_updater_type == 'rg':
-        feat_alloc_updater = pgfa.updates.feature_matrix.RowGibbsUpdater(singletons_updater=singletons_updater)
+        feat_alloc_updater = pgfa.updates.RowGibbsUpdater(singletons_updater=singletons_updater)
 
     if mixed_updates:
-        feat_alloc_updater = pgfa.updates.feature_matrix.GibbsMixtureUpdater(feat_alloc_updater)
+        feat_alloc_updater = pgfa.updates.GibbsMixtureUpdater(feat_alloc_updater)
 
     return pgfa.models.linear_gaussian.LinearGaussianModelUpdater(feat_alloc_updater)
 
@@ -131,7 +131,7 @@ def compute_l2_error(data, data_true, params):
 
     data_pred = params.Z @ params.V
 
-    return (1 / (params.D * params.N)) * np.sum(np.square(data_pred[idxs] - data_true[idxs]))
+    return (1 / np.sum(idxs)) * np.sum(np.square(data_pred[idxs] - data_true[idxs]))
 
 
 if __name__ == '__main__':

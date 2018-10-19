@@ -4,19 +4,21 @@ from pgfa.utils import get_b_cubed_score
 
 import pgfa.feature_allocation_priors
 import pgfa.models.nsfa
-import pgfa.updates.feature_matrix
+import pgfa.updates
 
 
 def main():
     np.random.seed(0)
 
-    num_iters = 1001
-    D = 100
+    num_iters = 100001
+    D = 10
     K = 5
     N_train = 1000
     N_test = 1000
 
     feat_alloc_prior = pgfa.feature_allocation_priors.BetaBernoulliFeatureAllocationDistribution(1, 1, K)
+
+    feat_alloc_prior = pgfa.feature_allocation_priors.IndianBuffetProcessDistribution()
 
     params_train = get_test_params(feat_alloc_prior, N_train, D, seed=0)
 
@@ -28,11 +30,15 @@ def main():
 
     singletons_updater = pgfa.models.nsfa.PriorSingletonsUpdater()
 
-    feat_alloc_updater = pgfa.updates.feature_matrix.GibbsMixtureUpdater(
-        pgfa.updates.feature_matrix.ParticleGibbsUpdater(annealed=True, singletons_updater=singletons_updater)
+    singletons_updater = pgfa.models.nsfa.CollapsedSingletonsUpdater()
+
+    feat_alloc_updater = pgfa.updates.GibbsMixtureUpdater(
+        pgfa.updates.ParticleGibbsUpdater(
+            annealed=True,  num_particles=10, singletons_updater=singletons_updater
+        )
     )
 
-    feat_alloc_updater = pgfa.updates.feature_matrix.GibbsUpdater(singletons_updater=singletons_updater)
+#     feat_alloc_updater = pgfa.updates.GibbsUpdater(singletons_updater=singletons_updater)
 
     model_updater = pgfa.models.nsfa.NonparametricSparaseFactorAnalysisModelUpdater(feat_alloc_updater)
 
@@ -64,7 +70,10 @@ def main():
             )
 
             if model.params.K > 0:
-                print(get_b_cubed_score(params_train.Z, model.params.Z))
+                try:
+                    print(get_b_cubed_score(params_train.Z, model.params.Z))
+                except:
+                    pass
 
             print(np.sum(model.params.Z, axis=0))
 
@@ -88,27 +97,31 @@ def get_test_params(feat_alloc_prior, num_data_points, num_observed_dims, params
     D = num_observed_dims
     N = num_data_points
 
-    Z = feat_alloc_prior.rvs(D)
-
-    K = Z.shape[1]
-
-    F = np.random.normal(0, 1, size=(K, N))
-
     if params is None:
-        gamma = 0.01
+        gamma = 1
 
-        S = 10 * np.ones(D)
+        Z = feat_alloc_prior.rvs(D)
+
+        K = Z.shape[1]
+
+        S = 1 * np.ones(D)
 
         V = np.random.multivariate_normal(np.zeros(K), (1 / gamma) * np.eye(K), size=D)
+
+        F = np.random.normal(0, 1, size=(K, N))
 
     else:
         gamma = params.gamma
 
-        S = params.S.copy()
-
         Z = params.Z.copy()
 
+        K = Z.shape[1]
+
+        S = params.S.copy()
+
         V = params.V.copy()
+
+        F = np.random.normal(0, 1, size=(K, N))
 
     return pgfa.models.nsfa.Parameters(gamma, F, S, V, Z)
 
@@ -136,18 +149,18 @@ def get_min_error(params_pred, params_true):
 
 
 if __name__ == '__main__':
-#     import line_profiler
-#     import pgfa.updates.feature_matrix.particle_gibbs
-# 
-#     profiler = line_profiler.LineProfiler(
-#         pgfa.models.nsfa.NonparametricSparaseFactorAnalysisModelUpdater.update,
-#         pgfa.updates.feature_matrix.particle_gibbs.do_particle_gibbs_update,
-#         pgfa.updates.feature_matrix.particle_gibbs._propose_annealed,
-#         pgfa.updates.feature_matrix.particle_gibbs._log_target_pdf_annealed
-#     )
-# 
-#     profiler.run("main()")
-# 
-#     profiler.print_stats()
+    #     import line_profiler
+    #     import pgfa.updates.particle_gibbs
+    #
+    #     profiler = line_profiler.LineProfiler(
+    #         pgfa.models.nsfa.NonparametricSparaseFactorAnalysisModelUpdater.update,
+    #         pgfa.updates.particle_gibbs.do_particle_gibbs_update,
+    #         pgfa.updates.particle_gibbs._propose_annealed,
+    #         pgfa.updates.particle_gibbs._log_target_pdf_annealed
+    #     )
+    #
+    #     profiler.run("main()")
+    #
+    #     profiler.print_stats()
 
     main()

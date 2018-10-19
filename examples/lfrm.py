@@ -5,16 +5,16 @@ from pgfa.utils import get_b_cubed_score
 
 import pgfa.feature_allocation_priors
 import pgfa.models.lfrm
-import pgfa.updates.feature_matrix
+import pgfa.updates
 
 
 def main():
     np.random.seed(0)
 
     K = 4
-    N = 100
+    N = 20
 
-    feat_alloc_prior = pgfa.feature_allocation_priors.BetaBernoulliFeatureAllocationDistribution(10, 1, K)
+    feat_alloc_prior = pgfa.feature_allocation_priors.BetaBernoulliFeatureAllocationDistribution(1, 1, K)
 
     data, data_true, params = simulate_data(feat_alloc_prior, N)
 
@@ -22,13 +22,13 @@ def main():
 
     singletons_updater = pgfa.models.lfrm.PriorSingletonsUpdater()
 
-    feat_alloc_updater = pgfa.updates.feature_matrix.ParticleGibbsUpdater(
+    feat_alloc_updater = pgfa.updates.ParticleGibbsUpdater(
         annealed=True, singletons_updater=singletons_updater
     )
 
-    feat_alloc_updater = pgfa.updates.feature_matrix.GibbsMixtureUpdater(feat_alloc_updater)
+    feat_alloc_updater = pgfa.updates.GibbsMixtureUpdater(feat_alloc_updater)
 
-#     feat_alloc_updater = pgfa.updates.feature_matrix.GibbsUpdater(singletons_updater=singletons_updater)
+#     feat_alloc_updater = pgfa.updates.GibbsUpdater(singletons_updater=singletons_updater)
 
     model_updater = pgfa.models.lfrm.LatentFactorRelationalModelUpdater(feat_alloc_updater)
 
@@ -97,7 +97,7 @@ def simulate_data(feat_alloc_prior, N, tau=0.1):
 
     for i in range(N):
         for j in range(N):
-            if np.random.random() < 0.0:
+            if np.random.random() < 0.1:
                 data[i, j] = np.nan
 
     return data, data_true, params
