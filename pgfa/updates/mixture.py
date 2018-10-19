@@ -1,4 +1,4 @@
-from .gibbs import GibbsUpdater
+from pgfa.updates.gibbs import GibbsUpdater
 
 
 class GibbsMixtureUpdater(object):

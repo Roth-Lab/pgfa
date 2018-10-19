@@ -1,7 +1,7 @@
 import numba
 import numpy as np
 
-from .base import FeatureAllocationMatrixUpdater
+from pgfa.updates.base import FeatureAllocationMatrixUpdater
 
 
 class MetropolisHastingsUpdater(FeatureAllocationMatrixUpdater):

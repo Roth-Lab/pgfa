@@ -1,4 +1,4 @@
-from .utils import get_rows
+from pgfa.updates.utils import get_rows
 
 
 class FeatureAllocationMatrixUpdater(object):

@@ -3,7 +3,7 @@ import numpy as np
 
 from pgfa.math_utils import discrete_rvs, log_normalize, log_sum_exp
 
-from .base import FeatureAllocationMatrixUpdater
+from pgfa.updates.base import FeatureAllocationMatrixUpdater
 
 
 class ParticleGibbsUpdater(FeatureAllocationMatrixUpdater):
