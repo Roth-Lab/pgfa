@@ -1,4 +1,4 @@
-from pgfa.updates.utils import get_rows
+import numpy as np
 
 
 class FeatureAllocationMatrixUpdater(object):
@@ -8,7 +8,7 @@ class FeatureAllocationMatrixUpdater(object):
     def update(self, model):
         num_rows = model.params.Z.shape[0]
 
-        for row_idx in get_rows(num_rows):
+        for row_idx in np.random.permutation(num_rows):
             cols = model.feat_alloc_prior.get_update_cols(row_idx, model.params.Z)
 
             feat_probs = model.feat_alloc_prior.get_feature_probs(row_idx, model.params.Z)
