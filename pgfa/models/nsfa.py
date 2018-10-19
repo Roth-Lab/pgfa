@@ -447,7 +447,7 @@ class CollapsedSingletonsUpdater(object):
             log_p_new = 0
 
         else:
-            v_new = np.atleast_2d(np.random.normal(0, 1 / gamma, size=k_new))
+            v_new = np.atleast_2d(np.random.normal(0, 1 / np.sqrt(gamma), size=k_new))
 
             prec_new = s * (v_new @ v_new.T) + np.eye(k_new)
 
