@@ -352,9 +352,7 @@ class PriorSingletonsUpdater(object):
 
         log_p_old = model.data_dist.log_p_row(model.data, model.params, row_idx)
 
-        diff = log_p_new - log_p_old
-
-        if diff > np.log(np.random.rand()):
+        if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, 0, 0):
             params = params_new
 
         else:
