@@ -16,7 +16,10 @@ class TraceReader(object):
         self.close()
 
     def __getitem__(self, name):
-        if self._is_valid_param(name):
+        if name in ['log_p', 'time']:
+            trace = self._fh[name][:self.num_iters]
+
+        elif self._is_valid_param(name):
             trace = self._get_param_trace(name)
 
         else:
@@ -57,9 +60,9 @@ class TraceWriter(object):
 
         self._fh.create_dataset('iter', (1, ), dtype=np.int64, maxshape=(None,))
 
-        self._fh.create_dataset('log_p', (1, ), dtype=np.int64, maxshape=(None,))
+        self._fh.create_dataset('log_p', (self._max_size, ), dtype=np.float64, maxshape=(None,))
 
-        self._fh.create_dataset('time', (1, ), dtype=np.int64, maxshape=(None,))
+        self._fh.create_dataset('time', (self._max_size, ), dtype=np.float64, maxshape=(None,))
 
         self._init()
 
@@ -102,7 +105,7 @@ class TraceWriter(object):
             self._max_size *= 2
 
             for name in self._fh.keys():
-                if name == 'data':
+                if name in ['data', 'iter']:
                     continue
 
                 self._fh[name].resize((self._max_size,))

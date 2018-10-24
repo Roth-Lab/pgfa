@@ -13,6 +13,9 @@ class RowGibbsUpdater(FeatureAllocationMatrixUpdater):
         self.singletons_updater = singletons_updater
 
     def update_row(self, cols, data, dist, feat_probs, params, row_idx):
+        if len(cols) == 0:
+            return params
+
         max_cols = len(cols)
 
         if self.max_cols is not None:

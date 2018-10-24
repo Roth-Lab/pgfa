@@ -37,11 +37,11 @@ def get_b_cubed_score(features_true, features_pred):
             if l > 0:
                 r.append(num / l)
 
-    p = sum(p) / len(p)
+    p = sum(p) / max(len(p), 1)
 
-    r = sum(r) / len(r)
+    r = sum(r) / max(len(r), 1)
 
-    f = 2 * (p * r) / (p + r)
+    f = 2 * (p * r) / max((p + r), 1)
 
     return f, p, r
 
