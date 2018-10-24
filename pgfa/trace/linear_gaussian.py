@@ -5,7 +5,7 @@ from .base import TraceReader, TraceWriter
 
 class LinearGaussianTraceReader(TraceReader):
     def _get_param_trace(self, name):
-        if name in ['alpha', 'tau_v', 'tau_x', 'K']:
+        if name in ['alpha', 'tau_v', 'tau_x', 'K', 'log_p_collapsed']:
             trace = self._fh[name][:self.num_iters]
 
         elif name == 'V':
