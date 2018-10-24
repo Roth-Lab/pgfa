@@ -58,7 +58,7 @@ class AbstractTraceWriter(object):
 
         self._fh.create_dataset('data', data=model.data)
 
-        self._init_dataset('iter', np.float64)
+        self._fh.create_dataset('iter', (1,), dtype=np.int64)
 
         self._init_dataset('log_p', np.float64)
 
