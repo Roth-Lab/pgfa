@@ -1,6 +1,7 @@
 import math
 import numba
 import numpy as np
+
 from pgfa.math_utils import do_metropolis_hastings_accept_reject
 
 
