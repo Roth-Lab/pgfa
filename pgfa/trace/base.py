@@ -2,7 +2,7 @@ import h5py
 import numpy as np
 
 
-class TraceReader(object):
+class AbstractTraceReader(object):
     def _get_param_trace(self, name):
         raise NotImplementedError()
 
@@ -16,7 +16,7 @@ class TraceReader(object):
         self.close()
 
     def __getitem__(self, name):
-        if name in ['log_p', 'time']:
+        if name in ['alpha', 'log_p', 'time', 'K']:
             trace = self._fh[name][:self.num_iters]
 
         elif self._is_valid_param(name):
@@ -42,27 +42,34 @@ class TraceReader(object):
         return (name in list(self._fh.keys())) and (name not in ['data', 'iter'])
 
 
-class TraceWriter(object):
+class AbstractTraceWriter(object):
     def _write_row(self, model):
         raise NotImplementedError()
 
     def _init(self):
         raise NotImplementedError()
 
-    def __init__(self, data, file_name):
+    def __init__(self, file_name, model):
         self._fh = h5py.File(file_name, 'w')
 
         self._iter = 0
 
         self._max_size = 1000
 
-        self._fh.create_dataset('data', data=data)
+        self._fh.create_dataset('data', data=model.data)
 
-        self._fh.create_dataset('iter', (1, ), dtype=np.int64, maxshape=(None,))
+        self._init_dataset('iter', np.float64)
 
-        self._fh.create_dataset('log_p', (self._max_size, ), dtype=np.float64, maxshape=(None,))
+        self._init_dataset('log_p', np.float64)
 
-        self._fh.create_dataset('time', (self._max_size, ), dtype=np.float64, maxshape=(None,))
+        self._init_dataset('time', np.float64)
+
+        self._init_dataset('K', np.int64)
+
+        self._init_dataset('Z', np.int64, vlen=True)
+
+        if hasattr(model.feat_alloc_prior, 'alpha'):
+            self._init_dataset('alpha', np.float64)
 
         self._init()
 
@@ -83,6 +90,13 @@ class TraceWriter(object):
         self._fh['log_p'][self._iter] = model.log_p
 
         self._fh['time'][self._iter] = time
+
+        self._fh['K'][self._iter] = model.params.Z.shape[1]
+
+        self._fh['Z'][self._iter] = model.params.Z.flatten()
+
+        if hasattr(model.feat_alloc_prior, 'alpha'):
+            self._fh['alpha'][self._iter] = model.feat_alloc_prior.alpha
 
         self._write_row(model)
 
