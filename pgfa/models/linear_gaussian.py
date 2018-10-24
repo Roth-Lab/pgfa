@@ -37,6 +37,14 @@ class LinearGaussianModel(object):
         """
         return self.joint_dist.log_p(self.data, self.params)
 
+    @property
+    def log_p_collapsed(self):
+        """ Log of joint pdf with V marginalized.
+        """
+        dist = CollapsedJointDistribution(self.feat_alloc_prior, self.priors)
+
+        return dist.log_p(self.data, self.params)
+
     def get_params_from_data(self):
         D = self.data.shape[1]
         N = self.data.shape[0]

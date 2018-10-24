@@ -37,6 +37,8 @@ class LinearGaussianTraceReader(TraceReader):
 
 class LinearGaussianTraceWriter(TraceWriter):
     def _init(self):
+        self._init_dataset('log_p_collapsed', np.float64)
+
         self._init_dataset('K', np.int64)
 
         self._init_dataset('alpha', np.float64)
@@ -50,6 +52,8 @@ class LinearGaussianTraceWriter(TraceWriter):
         self._init_dataset('Z', np.int8, vlen=True)
 
     def _write_row(self, model):
+        self._fh['log_p_collapsed'] = model.log_p_collapsed
+
         self._fh['K'][self._iter] = model.params.K
 
         if hasattr(model, 'alpha'):
