@@ -51,19 +51,19 @@ class Parameters(pgfa.models.base.AbstractParameters):
     def __init__(self, alpha, alpha_prior, tau_v, tau_v_prior, tau_x, tau_x_prior, V, Z):
         self.alpha = float(alpha)
 
-        self.alpha_prior = alpha_prior.astype(np.float64)
+        self.alpha_prior = np.array(alpha_prior, dtype=np.float64)
 
         self.tau_v = float(tau_v)
 
-        self.tau_v_prior = tau_v_prior.astype(np.float64)
+        self.tau_v_prior = np.array(tau_v_prior, dtype=np.float64)
 
         self.tau_x = float(tau_x)
 
-        self.tau_x_prior = tau_x_prior.astype(np.float64)
+        self.tau_x_prior = np.array(tau_x_prior, dtype=np.float64)
 
-        self.V = V.astype(np.float64)
+        self.V = np.array(V, dtype=np.float64)
 
-        self.Z = Z.astype(np.int8)
+        self.Z = np.array(Z, dtype=np.int8)
 
     @property
     def param_shapes(self):
