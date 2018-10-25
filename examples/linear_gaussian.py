@@ -3,7 +3,7 @@ import scipy.stats
 
 from pgfa.utils import get_b_cubed_score
 
-import pgfa.feature_allocation_priors
+import pgfa.feature_allocation_distributions
 import pgfa.models.linear_gaussian
 import pgfa.updates
 
@@ -13,13 +13,13 @@ def main():
 
     num_iters = 10001
     D = 10
-    K = None
+    K = 5
     N = 100
 
-    data, data_true, params = simulate_data(D, N, K=K, tau_v=1, tau_x=1)
+    data, data_true, params = simulate_data(D, N, K=K, tau_v=0.1, tau_x=10)
 
     model_updater = get_model_updater(
-        collapsed_singletons=False, feat_alloc_updater_type='g', ibp=(K is None), mixed_updates=True
+        collapsed_singletons=False, feat_alloc_updater_type='pga', ibp=(K is None), mixed_updates=True
     )
 
     model = get_model(data, K=K)
@@ -32,6 +32,7 @@ def main():
         if i % 10 == 0:
             print(
                 i,
+                model.params.alpha,
                 model.params.K,
                 model.log_p,
                 model.data_dist.log_p(model.data, model.params)
@@ -49,20 +50,16 @@ def main():
         model_updater.update(model)
 
 
-def get_model(data, K=None):
-    if K is None:
-        feat_alloc_prior = pgfa.feature_allocation_priors.IndianBuffetProcessDistribution()
+def get_model(data, alpha=1, K=None):
+    feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K=K)
 
-    else:
-        feat_alloc_prior = pgfa.feature_allocation_priors.BetaBernoulliFeatureAllocationDistribution(1, 1, 4)
-
-    return pgfa.models.linear_gaussian.LinearGaussianModel(data, feat_alloc_prior, collapsed=False)
+    return pgfa.models.linear_gaussian.Model(data, feat_alloc_dist, collapsed=False)
 
 
 def get_model_updater(collapsed_singletons=False, feat_alloc_updater_type='g', ibp=True, mixed_updates=False):
     if ibp:
         if collapsed_singletons:
-            singletons_updater = pgfa.models.linear_gaussian.CollapsedSingletonUpdater()
+            singletons_updater = pgfa.models.linear_gaussian.CollapsedSingletonsUpdater()
 
         else:
             singletons_updater = pgfa.models.linear_gaussian.PriorSingletonsUpdater()
@@ -89,17 +86,13 @@ def get_model_updater(collapsed_singletons=False, feat_alloc_updater_type='g', i
     if mixed_updates:
         feat_alloc_updater = pgfa.updates.GibbsMixtureUpdater(feat_alloc_updater)
 
-    return pgfa.models.linear_gaussian.LinearGaussianModelUpdater(feat_alloc_updater)
+    return pgfa.models.linear_gaussian.ModelUpdater(feat_alloc_updater)
 
 
-def simulate_data(D, N, K=None, tau_v=1, tau_x=1):
-    if K is None:
-        feat_alloc_prior = pgfa.feature_allocation_priors.IndianBuffetProcessDistribution()
+def simulate_data(D, N, alpha=1, K=None, tau_v=1, tau_x=1):
+    feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K=K)
 
-    else:
-        feat_alloc_prior = pgfa.feature_allocation_priors.BetaBernoulliFeatureAllocationDistribution(1, 1, K)
-
-    Z = feat_alloc_prior.rvs(N)
+    Z = feat_alloc_dist.rvs(alpha, N)
 
     K = Z.shape[1]
 
@@ -121,7 +114,7 @@ def simulate_data(D, N, K=None, tau_v=1, tau_x=1):
 
     data[mask] = np.nan
 
-    params = pgfa.models.linear_gaussian.Parameters(tau_v, tau_x, V, Z)
+    params = pgfa.models.linear_gaussian.Parameters(alpha, np.ones(2), tau_v, np.ones(2), tau_x, np.ones(2), V, Z)
 
     return data, data_true, params
 

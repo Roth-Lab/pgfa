@@ -1,9 +1,16 @@
 import numpy as np
 
+from pgfa.models.linear_gaussian import Parameters
+
 from .base import AbstractTraceReader, AbstractTraceWriter
 
 
 class TraceReader(AbstractTraceReader):
+    def get_params_iter(self):
+        for idx in range(self.num_iters):
+            yield Parameters(
+                tau_v, tau_x, V, Z)
+
     def _get_param_trace(self, name):
         if name in ['tau_v', 'tau_x', 'log_p_collapsed']:
             trace = self._fh[name][:self.num_iters]
@@ -47,8 +54,6 @@ class TraceReader(AbstractTraceReader):
 
 class TraceWriter(AbstractTraceWriter):
     def _init(self):
-        self._init_dataset('log_p_collapsed', np.float64)
-
         self._init_dataset('tau_v', np.float64)
 
         self._init_dataset('tau_x', np.float64)
@@ -56,8 +61,6 @@ class TraceWriter(AbstractTraceWriter):
         self._init_dataset('V', np.float64, vlen=True)
 
     def _write_row(self, model):
-        self._fh['log_p_collapsed'][self._iter] = model.log_p_collapsed
-
         self._fh['tau_v'][self._iter] = model.params.tau_v
 
         self._fh['tau_x'][self._iter] = model.params.tau_x

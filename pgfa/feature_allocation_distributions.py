@@ -1,39 +1,52 @@
 import numba
 import numpy as np
 
-from pgfa.math_utils import discrete_rvs, log_beta, log_factorial
+from pgfa.math_utils import discrete_rvs, log_beta, log_factorial, do_metropolis_hastings_accept_reject
+
+
+def get_feature_allocation_distribution(K=None):
+    if K is None:
+        dist = IndianBuffetProcessDistribution()
+
+    else:
+        dist = BetaBernoulliFeatureAllocationDistribution(K)
+
+    return dist
 
 
 class BetaBernoulliFeatureAllocationDistribution(object):
-    def __init__(self, a, b, K):
-        self.a = a
-
-        self.b = b
-
+    def __init__(self, K):
         self.K = K
 
-    def get_feature_probs(self, row_idx, Z):
+    def get_feature_probs(self, params, row_idx):
+        alpha = params.alpha
+        Z = params.Z
+
         N = Z.shape[0]
 
         m = _get_conditional_counts(row_idx, Z)
 
-        a = self.a + m
+        a0, b0 = self._get_beta_params(alpha)
 
-        b = self.b + (N - 1 - m)
+        a = a0 + m
+
+        b = b0 + (N - 1 - m)
 
         return a / (a + b)
 
-    def get_update_cols(self, row_idx, Z):
-        assert Z.shape[1] == self.K
-
+    def get_update_cols(self, params, row_idx):
         cols = np.arange(self.K)
 
         np.random.shuffle(cols)
 
         return cols
 
-    def log_p(self, Z):
-        assert Z.shape[1] == self.K
+    def log_p(self, params):
+        alpha = params.alpha
+        Z = params.Z
+
+        if Z.shape[1] != self.K:
+            return float('-inf')
 
         K = Z.shape[1]
 
@@ -44,9 +57,7 @@ class BetaBernoulliFeatureAllocationDistribution(object):
 
         m = np.sum(Z, axis=0)
 
-        a0 = self.a
-
-        b0 = self.b
+        a0, b0 = self._get_beta_params(alpha)
 
         a = a0 + m
 
@@ -54,10 +65,12 @@ class BetaBernoulliFeatureAllocationDistribution(object):
 
         return np.sum(log_beta(a, b) - log_beta(a0, b0))
 
-    def rvs(self, N):
+    def rvs(self, alpha, N):
         K = self.K
 
-        p = np.random.beta(self.a, self.b, size=K)
+        a, b = self._get_beta_params(alpha)
+
+        p = np.random.beta(a, b, size=K)
 
         Z = np.zeros((N, K), dtype=np.int64)
 
@@ -66,27 +79,23 @@ class BetaBernoulliFeatureAllocationDistribution(object):
 
         return Z
 
-    def sample_num_singletons(self, Z):
-        raise NotImplementedError
-
-    def update(self, Z):
-        pass
+    def _get_beta_params(self, alpha):
+        return alpha / self.K, 1
 
 
 class IndianBuffetProcessDistribution(object):
-    def __init__(self, alpha=1, priors=np.array([1, 1])):
-        self.alpha = alpha
+    def get_feature_probs(self, params, row_idx):
+        Z = params.Z
 
-        self.priors = priors
-
-    def get_feature_probs(self, row_idx, Z):
         N = Z.shape[0]
 
         m = _get_conditional_counts(row_idx, Z)
 
         return m / N
 
-    def get_update_cols(self, row_idx, Z):
+    def get_update_cols(self, params, row_idx):
+        Z = params.Z
+
         m = _get_conditional_counts(row_idx, Z)
 
         cols = [k for k in range(Z.shape[1]) if (m[k] > 0)]
@@ -95,12 +104,14 @@ class IndianBuffetProcessDistribution(object):
 
         return cols
 
-    def log_p(self, Z):
-        alpha = self.alpha
+    def log_p(self, params):
+        alpha = params.alpha
+        Z = params.Z
 
         K = Z.shape[1]
 
         N = Z.shape[0]
+
         if K == 0:
             return 0
 
@@ -125,8 +136,8 @@ class IndianBuffetProcessDistribution(object):
 
         return log_p
 
-    def rvs(self, N):
-        K = np.random.poisson(self.alpha)
+    def rvs(self, alpha, N):
+        K = np.random.poisson(alpha)
 
         Z = np.ones((1, K), dtype=np.int64)
 
@@ -146,7 +157,7 @@ class IndianBuffetProcessDistribution(object):
 
             Z = np.row_stack([Z, z])
 
-            k_new = np.random.poisson(self.alpha / (n + 1))
+            k_new = np.random.poisson(alpha / (n + 1))
 
             if k_new > 0:
                 Z = np.column_stack([Z, np.zeros((Z.shape[0], k_new))])
@@ -155,21 +166,42 @@ class IndianBuffetProcessDistribution(object):
 
         return Z.astype(np.int64)
 
-    def sample_num_singletons(self, Z):
-        N = Z.shape[0]
 
-        return np.random.poisson(self.alpha / N)
+def update_alpha(model):
+    alpha_old = model.params.alpha
 
-    def update(self, Z):
-        K = Z.shape[1]
+    log_p_old = model.feat_alloc_dist.log_p(model.params)
 
-        N = Z.shape[0]
+    alpha_new = np.random.gamma(model.params.alpha_prior[0], scale=(1 / model.params.alpha_prior[1]))
 
-        a = K + self.priors[0]
+    model.params.alpha = alpha_new
 
-        b = np.sum(1 / np.arange(1, N + 1)) + self.priors[1]
+    log_p_new = model.feat_alloc_dist.log_p(model.params)
 
-        self.alpha = np.random.gamma(a, 1 / b)
+    if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, 0, 0):
+        model.params.alpha = alpha_new
+
+    else:
+        model.params.alpha = alpha_old
+
+
+def update_alpha_gibbs(model):
+    params = model.params
+    priors = model.priors
+
+    Z = params.Z
+
+    K = Z.shape[1]
+
+    N = Z.shape[0]
+
+    a = K + priors[0]
+
+    b = np.sum(1 / np.arange(1, N + 1)) + priors[1]
+
+    params.alpha = np.random.gamma(a, 1 / b)
+
+    return params
 
 
 @numba.njit(cache=True)
