@@ -49,21 +49,34 @@ class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
 
 class Parameters(pgfa.models.base.AbstractParameters):
     def __init__(self, alpha, alpha_prior, tau_v, tau_v_prior, tau_x, tau_x_prior, V, Z):
-        self.alpha = alpha
+        self.alpha = float(alpha)
 
-        self.alpha_prior = alpha_prior
+        self.alpha_prior = alpha_prior.astype(np.float64)
 
-        self.tau_v = tau_v
+        self.tau_v = float(tau_v)
 
-        self.tau_v_prior = tau_v_prior
+        self.tau_v_prior = tau_v_prior.astype(np.float64)
 
-        self.tau_x = tau_x
+        self.tau_x = float(tau_x)
 
-        self.tau_x_prior = tau_x_prior
+        self.tau_x_prior = tau_x_prior.astype(np.float64)
 
-        self.V = V
+        self.V = V.astype(np.float64)
 
-        self.Z = Z
+        self.Z = Z.astype(np.int8)
+
+    @property
+    def param_shapes(self):
+        return {
+            'alpha': (),
+            'alpha_prior': (2,),
+            'tau_v': (),
+            'tau_v_prior': (2,),
+            'tau_x': (),
+            'tau_x_prior': (2,),
+            'V': ('K', 'D'),
+            'Z': ('N', 'K')
+        }
 
     @property
     def D(self):

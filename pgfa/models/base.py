@@ -72,14 +72,18 @@ class AbstractParametersDistribution(object):
 
 class AbstractParameters(object):
     @property
-    def N(self):
-        """ Number of data points.
-        """
+    def param_shapes(self):
         raise NotImplementedError
 
     @property
     def D(self):
         """ Number of dimensions of dataset.
+        """
+        raise NotImplementedError
+
+    @property
+    def N(self):
+        """ Number of data points.
         """
         raise NotImplementedError
 
