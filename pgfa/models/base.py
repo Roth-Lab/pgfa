@@ -1,4 +1,4 @@
-from pgfa.feature_allocation_distributions import update_alpha
+import pgfa.feature_allocation_distributions
 
 
 class AbstractModel(object):
@@ -47,14 +47,17 @@ class AbstractModelUpdater(object):
     def __init__(self, feat_alloc_updater):
         self.feat_alloc_updater = feat_alloc_updater
 
-    def update(self, model):
+    def update(self, model, update_alpha=True, update_feat_alloc=True, update_params=True):
         """ Update all parameters in a feature allocation model.
         """
-        self.feat_alloc_updater.update(model)
+        if update_feat_alloc:
+            self.feat_alloc_updater.update(model)
 
-        self._update_model_params(model)
+        if update_params:
+            self._update_model_params(model)
 
-        update_alpha(model)
+        if update_alpha:
+            pgfa.feature_allocation_distributions.update_alpha(model)
 
 
 class AbstractDataDistribution(object):
