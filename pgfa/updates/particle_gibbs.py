@@ -76,15 +76,9 @@ def do_particle_gibbs_update(
 
             z_test[cols[:t]] = particles[i, :t]
 
-            if annealed:
-                particles[i, t], log_p[i], log_norm = _propose_annealed(
-                    cols[:(t + 1)], data, dist, feat_probs, params, row_idx, z_test, T, idx=idx
-                )
-
-            else:
-                particles[i, t], log_p[i], log_norm = _propose(
-                    cols[:(t + 1)], data, dist, feat_probs, params, row_idx, z_test, idx=idx
-                )
+            particles[i, t], log_p[i], log_norm = _propose(
+                cols[:(t + 1)], data, dist, feat_probs, params, row_idx, z_test, T, annealed=annealed, idx=idx
+            )
 
             log_w = log_norm - log_p_old[i]
 
@@ -104,6 +98,20 @@ def do_particle_gibbs_update(
 
 
 @numba.njit(cache=True)
+def _log_target_pdf(cols, feat_probs, log_p_x, z):
+
+    log_p = 0
+
+    log_p += np.sum(z[cols] * np.log(feat_probs[cols]))
+
+    log_p += np.sum((1 - z[cols]) * np.log(1 - feat_probs[cols]))
+
+    log_p += log_p_x
+
+    return log_p
+
+
+@numba.njit(cache=True)
 def _log_target_pdf_annealed(cols, feat_probs, log_p_x, z, T):
     t = len(cols)
 
@@ -119,72 +127,28 @@ def _log_target_pdf_annealed(cols, feat_probs, log_p_x, z, T):
     return log_p
 
 
-def _propose_annealed(cols, data, dist, feat_probs, params, row_idx, z, T, idx=-1):
+def _propose(cols, data, dist, feat_probs, params, row_idx, z, T, annealed=False, idx=-1):
     cols = np.array(cols, dtype=np.int64)
 
     log_p = np.zeros(2)
 
-    z[cols[-1]] = 0
+    for val in [0, 1]:
+        z[cols[-1]] = val
 
-    params.Z[row_idx] = z
+        params.Z[row_idx] = z
 
-    log_p_x = dist.log_p_row(data, params, row_idx)
+        log_p_x = dist.log_p_row(data, params, row_idx)
 
-    log_p[0] = _log_target_pdf_annealed(cols, feat_probs, log_p_x, z, T)
+        if annealed:
+            log_p[val] = _log_target_pdf_annealed(cols, feat_probs, log_p_x, z, T)
 
-    z[cols[-1]] = 1
-
-    params.Z[row_idx] = z
-
-    log_p_x = dist.log_p_row(data, params, row_idx)
-
-    log_p[1] = _log_target_pdf_annealed(cols, feat_probs, log_p_x, z, T)
+        else:
+            log_p[val] = _log_target_pdf(cols, feat_probs, log_p_x, z)
 
     log_norm = log_sum_exp(log_p)
 
-    log_p = log_p - log_norm
-
     if idx == -1:
-        p = np.exp(log_p)
-
-        idx = discrete_rvs(p)
-
-    idx = int(idx)
-
-    return idx, log_p[idx], log_norm
-
-
-def _log_target_pdf(cols, data, dist, feat_probs, params, row_idx, z):
-    params.Z[row_idx] = z
-
-    log_p = 0
-
-    log_p += np.sum(z[cols] * np.log(feat_probs[cols]))
-
-    log_p += np.sum((1 - z[cols]) * np.log(1 - feat_probs[cols]))
-
-    log_p += dist.log_p_row(data, params, row_idx)
-
-    return log_p
-
-
-def _propose(cols, data, dist, feat_probs, params, row_idx, z, idx=-1):
-    log_p = np.zeros(2)
-
-    z[cols[-1]] = 0
-
-    log_p[0] = _log_target_pdf(cols, data, dist, feat_probs, params, row_idx, z)
-
-    z[cols[-1]] = 1
-
-    log_p[1] = _log_target_pdf(cols, data, dist, feat_probs, params, row_idx, z)
-
-    log_norm = log_sum_exp(log_p)
-
-    log_p = log_p - log_norm
-
-    if idx == -1:
-        p = np.exp(log_p)
+        p = np.exp(log_p - log_norm)
 
         idx = discrete_rvs(p)
 
