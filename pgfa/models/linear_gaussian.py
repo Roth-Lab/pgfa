@@ -1,5 +1,6 @@
 import numba
 import numpy as np
+import scipy.linalg
 import scipy.stats
 
 from pgfa.math_utils import do_metropolis_hastings_accept_reject
@@ -39,12 +40,18 @@ class Model(pgfa.models.base.AbstractModel):
 
 
 class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
+    def __init__(self, feat_alloc_updater, update_hyper_params=True):
+        self.update_hyper_params = update_hyper_params
+
+        super().__init__(feat_alloc_updater)
+
     def _update_model_params(self, model):
         update_V(model)
 
-        update_tau_v(model)
+        if self.update_hyper_params:
+            update_tau_v(model)
 
-        update_tau_x(model)
+            update_tau_x(model)
 
 
 class Parameters(pgfa.models.base.AbstractParameters):
@@ -102,24 +109,52 @@ class Parameters(pgfa.models.base.AbstractParameters):
 #=========================================================================
 # Updates
 #=========================================================================
+# def update_V(model):
+#     data = model.data
+#     params = model.params
+#
+#     t_v = params.tau_v
+#     t_x = params.tau_x
+#     Z = params.Z.astype(np.float64)
+#     X = np.nan_to_num(data)
+#
+#     M = np.linalg.inv(Z.T @ Z + (t_v / t_x) * np.eye(params.K))
+#
+#     model.params.V = scipy.stats.matrix_normal.rvs(
+#         mean=M @ Z.T @ X,
+#         rowcov=(1 / t_x) * M,
+#         colcov=np.eye(params.D)
+#     )
+
+
 def update_V(model):
-    data = model.data
-    params = model.params
+    tau_v = model.params.tau_v
+    tau_x = model.params.tau_x
+    Z = model.params.Z.astype(np.float128)
+    X = model.data
 
-    t_v = params.tau_v
-    t_x = params.tau_x
-    Z = params.Z
-    X = np.nan_to_num(data)
+    D = model.params.D
+    K = model.params.K
 
-    M = np.linalg.inv(Z.T @ Z + (t_v / t_x) * np.eye(params.K))
+    V = np.zeros((K, D))
 
-    params.V = scipy.stats.matrix_normal.rvs(
-        mean=M @ Z.T @ X,
-        rowcov=(1 / t_x) * M,
-        colcov=np.eye(params.D)
-    )
+    for d in range(D):
+        x_ind = (~np.isnan(X[:, d]))
 
-    return params
+        X_tmp = X[x_ind, d]
+
+        Z_tmp = Z[x_ind, :]
+
+        M_inv = Z_tmp.T @ Z_tmp + (tau_v / tau_x) * np.eye(K)
+
+        C = scipy.linalg.cho_factor(M_inv)
+
+        eps = np.random.normal(0, 1, size=(K,))
+
+        V[:, d] = scipy.linalg.solve_triangular(C[0], eps, lower=C[1]) + \
+            scipy.linalg.cho_solve(C, Z_tmp.T @ X_tmp)
+
+    model.params.V = V
 
 
 def update_tau_v(model):
@@ -129,9 +164,9 @@ def update_tau_v(model):
 
     a = params.tau_v_prior[0] + 0.5 * params.K * params.D
 
-    b = params.tau_v_prior[1] + 0.5 * np.trace(V.T @ V)
+    b = params.tau_v_prior[1] + 0.5 * np.sum(np.square(V))
 
-    params.tau_v = np.random.gamma(a, 1 / b)
+    params.tau_v = scipy.stats.gamma.rvs(a, scale=(1 / b))
 
     model.params = params
 
@@ -142,15 +177,15 @@ def update_tau_x(model):
 
     V = params.V
     Z = params.Z
-    X = np.nan_to_num(data)
+    X = data
 
     a = params.tau_x_prior[0] + 0.5 * params.N * params.D
 
     Y = X - Z @ V
 
-    b = params.tau_x_prior[1] + 0.5 * np.trace(Y.T @ Y)
+    b = params.tau_x_prior[1] + 0.5 * np.nansum(np.square(Y))
 
-    params.tau_x = np.random.gamma(a, 1 / b)
+    params.tau_x = scipy.stats.gamma.rvs(a, scale=(1 / b))
 
     model.params = params
 
@@ -219,7 +254,7 @@ class UncollapsedDataDistribution(pgfa.models.base.AbstractDataDistribution):
         D = params.D
         N = params.N
         V = params.V
-        Z = params.Z
+        Z = params.Z.astype(np.float64)
         X = data
 
         resid = (X - Z @ V)
@@ -256,12 +291,17 @@ class UncollapsedParametersDistribution(pgfa.models.base.AbstractParametersDistr
         log_p += scipy.stats.gamma.logpdf(t_x, a, scale=(1 / b))
 
         # Prior on V
-        log_p += scipy.stats.matrix_normal.logpdf(
-            V,
-            mean=np.zeros((K, D)),
-            colcov=np.eye(D),
-            rowcov=(1 / t_v) * np.eye(K)
-        )
+#         log_p += scipy.stats.matrix_normal.logpdf(
+#             V,
+#             mean=np.zeros((K, D)),
+#             colcov=np.eye(D),
+#             rowcov=(1 / t_v) * np.eye(K)
+#         )
+
+        for k in range(K):
+            log_p += scipy.stats.multivariate_normal.logpdf(
+                V[k], np.zeros(D), (1 / t_v) * np.eye(D)
+            )
 
         return log_p
 
