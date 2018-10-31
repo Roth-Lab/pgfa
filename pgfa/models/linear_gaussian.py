@@ -133,8 +133,8 @@ def update_V(model):
 
     t_v = params.tau_v
     t_x = params.tau_x
-    Z = params.Z.astype(np.int64)
-    X = np.nan_to_num(data)
+    Z = params.Z.astype(np.float64)
+    X = data
 
     D = params.D
 
