@@ -121,8 +121,7 @@ def _log_target_pdf_annealed(cols, feat_probs, log_p_x, z, T):
 
     log_p += np.sum((1 - z[cols]) * np.log(1 - feat_probs[cols]))
 
-    if t > 1:
-        log_p += ((t - 1) / (T - 1)) * log_p_x
+    log_p += (t / T) * log_p_x
 
     return log_p
 
