@@ -118,43 +118,72 @@ class Parameters(pgfa.models.base.AbstractParameters):
 #     Z = params.Z.astype(np.float64)
 #     X = np.nan_to_num(data)
 #
-#     M = np.linalg.inv(Z.T @ Z + (t_v / t_x) * np.eye(params.K))
+#     M = Z.T @ Z + (t_v / t_x) * np.eye(params.K)
 #
 #     model.params.V = scipy.stats.matrix_normal.rvs(
-#         mean=M @ Z.T @ X,
-#         rowcov=(1 / t_x) * M,
+#         mean=scipy.linalg.solve(M, Z.T @ X),
+#         rowcov=np.linalg.inv(t_x * M),
 #         colcov=np.eye(params.D)
 #     )
 
 
 def update_V(model):
-    tau_v = model.params.tau_v
-    tau_x = model.params.tau_x
-    Z = model.params.Z.astype(np.float128)
-    X = model.data
+    data = model.data
+    params = model.params
 
-    D = model.params.D
-    K = model.params.K
+    t_v = params.tau_v
+    t_x = params.tau_x
+    Z = params.Z.astype(np.int64)
+    X = np.nan_to_num(data)
 
-    V = np.zeros((K, D))
+    D = params.D
+
+    V = np.zeros(params.V.shape)
 
     for d in range(D):
-        x_ind = (~np.isnan(X[:, d]))
+        idxs = ~np.isnan(X[:, d])
 
-        X_tmp = X[x_ind, d]
+        X_tmp = X[idxs, d]
 
-        Z_tmp = Z[x_ind, :]
+        Z_tmp = Z[idxs]
 
-        M_inv = Z_tmp.T @ Z_tmp + (tau_v / tau_x) * np.eye(K)
+        M = Z_tmp.T @ Z_tmp + (t_v / t_x) * np.eye(params.K)
 
-        C = scipy.linalg.cho_factor(M_inv)
-
-        eps = np.random.normal(0, 1, size=(K,))
-
-        V[:, d] = scipy.linalg.solve_triangular(C[0], eps, lower=C[1]) + \
-            scipy.linalg.cho_solve(C, Z_tmp.T @ X_tmp)
+        V[:, d] = scipy.stats.multivariate_normal.rvs(
+            scipy.linalg.solve(M, Z_tmp.T @ X_tmp, assume_a='pos'),
+            (1 / t_x) * scipy.linalg.inv(M)
+        )
 
     model.params.V = V
+
+# def update_V(model):
+#     tau_v = model.params.tau_v
+#     tau_x = model.params.tau_x
+#     Z = model.params.Z.astype(np.float128)
+#     X = model.data
+#
+#     D = model.params.D
+#     K = model.params.K
+#
+#     V = np.zeros((K, D))
+#
+#     for d in range(D):
+#         x_ind = (~np.isnan(X[:, d]))
+#
+#         X_tmp = X[x_ind, d]
+#
+#         Z_tmp = Z[x_ind, :]
+#
+#         M_inv = Z_tmp.T @ Z_tmp + (tau_v / tau_x) * np.eye(K) + np.eye(K)
+#
+#         C = scipy.linalg.cho_factor(M_inv)
+#
+#         eps = np.random.normal(0, 1, size=(K,))
+#
+#         V[:, d] = scipy.linalg.solve_triangular(C[0], eps, lower=C[1]) + \
+#             scipy.linalg.cho_solve(C, Z_tmp.T @ X_tmp)
+#
+#     model.params.V = V
 
 
 def update_tau_v(model):
@@ -179,11 +208,13 @@ def update_tau_x(model):
     Z = params.Z
     X = data
 
-    a = params.tau_x_prior[0] + 0.5 * params.N * params.D
+    idxs = ~np.isnan(X)
 
     Y = X - Z @ V
 
-    b = params.tau_x_prior[1] + 0.5 * np.nansum(np.square(Y))
+    a = params.tau_x_prior[0] + 0.5 * np.sum(idxs)
+
+    b = params.tau_x_prior[1] + 0.5 * np.sum(np.square(Y[idxs]))
 
     params.tau_x = scipy.stats.gamma.rvs(a, scale=(1 / b))
 
@@ -251,17 +282,17 @@ class UncollapsedDataDistribution(pgfa.models.base.AbstractDataDistribution):
     def log_p(self, data, params):
         t_x = params.tau_x
 
-        D = params.D
-        N = params.N
         V = params.V
         Z = params.Z.astype(np.float64)
         X = data
 
-        resid = (X - Z @ V)
+        idxs = ~np.isnan(X)
 
-        log_p = 0.5 * N * D * (np.log(t_x) - np.log(2 * np.pi))
+        resid = X - Z @ V
 
-        log_p -= 0.5 * t_x * np.nansum(np.square(resid))
+        log_p = 0.5 * np.sum(idxs) * (np.log(t_x) - np.log(2 * np.pi))
+
+        log_p -= 0.5 * t_x * np.sum(np.square(resid[idxs]))
 
         return log_p
 
@@ -312,9 +343,15 @@ def _log_p_row(t_x, x, z, V):
 
     log_p = 0
 
-    log_p += 0.5 * D * (np.log(t_x) - np.log(2 * np.pi))
+    m = z @ V
 
-    log_p -= 0.5 * t_x * np.nansum(np.square(x - z @ V))
+    for d in range(D):
+        if np.isnan(x[d]):
+            continue
+
+        log_p += 0.5 * (np.log(t_x) - np.log(2 * np.pi))
+
+        log_p -= 0.5 * t_x * np.square(x[d] - m[d])
 
     return log_p
 
