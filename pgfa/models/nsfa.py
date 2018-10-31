@@ -1,4 +1,3 @@
-import itertools
 import numpy as np
 import numba
 import scipy.linalg
@@ -6,44 +5,16 @@ import scipy.stats
 
 from pgfa.math_utils import do_metropolis_hastings_accept_reject
 
+import pgfa.models.base
 
-class NonparametricSparaseFactorAnalysisModel(object):
-    def __init__(self, data, feat_alloc_prior, params=None, priors=None):
-        self.data = data
 
-        self.feat_alloc_prior = feat_alloc_prior
+class Model(pgfa.models.base.AbstractModel):
+    @staticmethod
+    def get_default_params(data, feat_alloc_dist):
+        D = data.shape[0]
+        N = data.shape[1]
 
-        if params is None:
-            params = self.get_params_from_data()
-
-        self.params = params
-
-        if priors is None:
-            priors = Priors()
-
-        self.priors = priors
-
-        self.data_dist = DataDistribution()
-
-        self.joint_dist = JointDistribution(feat_alloc_prior, priors)
-
-    @property
-    def log_p(self):
-        return self.joint_dist.log_p(self.data, self.params)
-
-    @property
-    def rmse(self):
-        X_true = self.data
-
-        X_pred = self.params.W @ self.params.F
-
-        return np.sqrt(np.mean((X_true - X_pred)**2))
-
-    def get_params_from_data(self):
-        D = self.data.shape[0]
-        N = self.data.shape[1]
-
-        Z = self.feat_alloc_prior.rvs(D)
+        Z = feat_alloc_dist.rvs(1, D)
 
         K = Z.shape[1]
 
@@ -57,7 +28,15 @@ class NonparametricSparaseFactorAnalysisModel(object):
         else:
             V = np.random.multivariate_normal(np.zeros(K), np.eye(K), size=D)
 
-        return Parameters(1, F, S, V, Z)
+        return Parameters(1, np.ones(2), 1, np.ones(2), F, S, np.ones(2), V, Z)
+
+    @property
+    def rmse(self):
+        X_true = self.data
+
+        X_pred = self.params.W @ self.params.F
+
+        return np.sqrt(np.mean((X_true - X_pred)**2))
 
     def log_predictive_pdf(self, data):
         S = self.params.S
@@ -80,43 +59,107 @@ class NonparametricSparaseFactorAnalysisModel(object):
 
         return log_p
 
+    def _init_joint_dist(self, feat_alloc_dist):
+        self.joint_dist = pgfa.models.base.JointDistribution(
+            DataDistribution(), feat_alloc_dist, ParameterDistribution()
+        )
+
+
+class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
+    def _update_model_params(self, model):
+        update_V(model)
+
+        update_F(model)
+
+        update_gamma(model)
+
+        update_S(model)
+
+
+class Parameters(pgfa.models.base.AbstractParameters):
+    def __init__(self, alpha, alpha_prior, gamma, gamma_prior, F, S, S_prior, V, Z):
+        self.alpha = alpha
+
+        self.alpha_prior = alpha_prior
+
+        self.gamma = gamma
+
+        self.gamma_prior = gamma_prior
+
+        self.F = F
+
+        self.S = S
+
+        self.S_prior = S_prior
+
+        self.V = V
+
+        self.Z = Z
+
+    @property
+    def param_shapes(self):
+        return {
+            'alpha': (),
+            'alpha_prior': (2,),
+            'gamma': (),
+            'gamma_prior': (2,),
+            'F': ('K', 'N'),
+            'S': ('D',),
+            'S_prior': (2,),
+            'V': ('D', 'K'),
+            'Z': ('D', 'K')
+        }
+
+    @property
+    def D(self):
+        return self.Z.shape[0]
+
+    @property
+    def N(self):
+        return self.F.shape[1]
+
+    @property
+    def W(self):
+        return self.Z * self.V
+
+    def copy(self):
+        return Parameters(
+            self.alpha,
+            self.alpha_prior.copy(),
+            self.gamma,
+            self.gamma_prior.copy(),
+            self.F.copy(),
+            self.S.copy(),
+            self.S_prior.copy(),
+            self.V.copy(),
+            self.Z.copy()
+        )
+
 
 #=========================================================================
 # Updates
 #=========================================================================
-class NonparametricSparaseFactorAnalysisModelUpdater(object):
-    def __init__(self, feat_alloc_updater):
-        self.feat_alloc_updater = feat_alloc_updater
+def update_gamma(model):
+    params = model.params
 
-    def update(self, model):
-        self.feat_alloc_updater.update(model)
+    a = params.gamma_prior[0] + 0.5 * params.D * params.K
 
-        model.params = update_V(model.data, model.params)
-
-        if model.params.K > 0:
-            model.params = update_F(model.data, model.params)
-
-        model.params = update_gamma(model.params, model.priors)
-
-        model.params = update_S(model.data, model.params, model.priors)
-
-        model.feat_alloc_prior.update(model.params.Z)
-
-
-def update_gamma(params, priors):
-    a = priors.gamma[0] + 0.5 * params.D * params.K
-
-    b = priors.gamma[1] + 0.5 * np.sum(np.square(params.V))
+    b = params.gamma_prior[1] + 0.5 * np.sum(np.square(params.V))
 
     params.gamma = scipy.stats.gamma.rvs(a, scale=(1 / b))
 
-    return params
+    model.params = params
 
 
-def update_F(data, params):
+def update_F(model):
+    params = model.params
+
+    if params.K == 0:
+        return
+
     S = np.diag(params.S)
     W = params.W
-    X = data
+    X = model.data
 
     A = np.eye(params.K) + W.T @ S @ W
 
@@ -128,19 +171,21 @@ def update_F(data, params):
 
     params.F = b + scipy.linalg.solve_triangular(A_chol[0], eps, lower=A_chol[1])
 
-    return params
+    model.params = params
 
 
-def update_S(data, params, priors):
+def update_S(model):
+    params = model.params
+
     F = params.F
     W = params.W
-    X = data
+    X = model.data
 
     R = X - W @ F
 
-    a = priors.S[0] + 0.5 * params.N
+    a = params.S_prior[0] + 0.5 * params.N
 
-    b = priors.S[1] + 0.5 * np.sum(np.square(R), axis=1)
+    b = params.S_prior[1] + 0.5 * np.sum(np.square(R), axis=1)
 
     S = np.zeros(params.D)
 
@@ -149,13 +194,15 @@ def update_S(data, params, priors):
 
     params.S = S
 
-    return params
+    model.params = params
 
 
-def update_V(data, params):
-    params.V = _update_V(data, params.gamma, params.F, params.S, params.V, params.Z)
+def update_V(model):
+    params = model.params
 
-    return params
+    params.V = _update_V(model.data, params.gamma, params.F, params.S, params.V, params.Z)
+
+    model.params = params
 
 
 @numba.njit(cache=True)
@@ -187,60 +234,9 @@ def _update_V(data, gamma, F, S, V, Z):
 
 
 #=========================================================================
-# Container classes
-#=========================================================================
-class Parameters(object):
-    def __init__(self, gamma, F, S, V, Z):
-        self.gamma = gamma
-
-        self.F = F
-
-        self.S = S
-
-        self.V = V
-
-        self.Z = Z
-
-    @property
-    def D(self):
-        return self.Z.shape[0]
-
-    @property
-    def K(self):
-        return self.Z.shape[1]
-
-    @property
-    def N(self):
-        return self.F.shape[1]
-
-    @property
-    def W(self):
-        return self.Z * self.V
-
-    def copy(self):
-        return Parameters(self.gamma, self.F.copy(), self.S.copy(), self.V.copy(), self.Z.copy())
-
-
-class Priors(object):
-    def __init__(self, gamma=None, S=None):
-        if gamma is None:
-            gamma = np.ones(2)
-
-        self.gamma = gamma
-
-        if S is None:
-            S = np.ones(2)
-
-        self.S = S
-
-
-#=========================================================================
 # Densities and proposals
 #=========================================================================
-class DataDistribution(object):
-    def __init__(self):
-        pass
-
+class DataDistribution(pgfa.models.base.AbstractDataDistribution):
     def log_p(self, data, params):
         D = params.D
         N = params.N
@@ -285,27 +281,14 @@ def log_p_row(F, N, S, X, V, Z, row_idx):
     return log_p
 
 
-class JointDistribution(object):
-    def __init__(self, feat_alloc_prior, priors):
-        self.data_dist = DataDistribution()
-
-        self.feat_alloc_prior = feat_alloc_prior
-
-        self.priors = priors
-
-    def log_p(self, data, params):
+class ParameterDistribution(pgfa.models.base.AbstractParametersDistribution):
+    def log_p(self, params):
         gamma = params.gamma
         F = params.F
         S = params.S
         V = params.V
 
         log_p = 0
-
-        # Binary matrix prior
-        log_p += self.feat_alloc_prior.log_p(params.Z)
-
-        # Data
-        log_p += self.data_dist.log_p(data, params)
 
         # Common factors prior
         log_p += np.sum(
@@ -320,10 +303,10 @@ class JointDistribution(object):
 
         # Noise covariance
         log_p += np.sum(
-            scipy.stats.gamma.logpdf(S, self.priors.S[0], scale=(1 / self.priors.S[1]))
+            scipy.stats.gamma.logpdf(S, params.S_prior[0], scale=(1 / params.S_prior[1]))
         )
 
-        log_p += scipy.stats.gamma.logpdf(1 / gamma, self.priors.gamma[0], scale=(1 / self.priors.gamma[1]))
+        log_p += scipy.stats.gamma.logpdf(1 / gamma, params.gamma_prior[0], scale=(1 / params.gamma_prior[1]))
 
         return log_p
 
@@ -342,14 +325,15 @@ class PriorSingletonsUpdater(object):
         return model.params
 
     def _update_row(self, model, row_idx):
+        alpha = model.params.alpha
+        gamma = model.params.gamma
+
         D = model.params.D
         N = model.params.N
-        gamma = model.params.gamma
-        S = model.params.S
 
         k_old = len(get_singletons_idxs(model.params.Z, row_idx))
 
-        k_new = model.feat_alloc_prior.sample_num_singletons(model.params.Z)
+        k_new = scipy.stats.poisson.rvs(alpha / D)
 
         if (k_new == 0) and (k_old == 0):
             return model.params
@@ -360,27 +344,27 @@ class PriorSingletonsUpdater(object):
 
         K_new = num_non_singletons + k_new
 
-        F_new = np.zeros((K_new, N))
+        params_new = model.params.copy()
 
-        F_new[:num_non_singletons] = model.params.F[non_singleton_idxs]
+        params_new.F = np.zeros((K_new, N))
 
-        F_new[num_non_singletons:] = np.random.normal(0, 1, size=(k_new, N))
+        params_new.F[:num_non_singletons] = model.params.F[non_singleton_idxs]
 
-        V_new = np.zeros((D, K_new))
+        params_new.F[num_non_singletons:] = np.random.normal(0, 1, size=(k_new, N))
 
-        V_new[:, :num_non_singletons] = model.params.V[:, non_singleton_idxs]
+        params_new.V = np.zeros((D, K_new))
 
-        V_new[:, num_non_singletons:] = np.random.multivariate_normal(
+        params_new.V[:, :num_non_singletons] = model.params.V[:, non_singleton_idxs]
+
+        params_new.V[:, num_non_singletons:] = np.random.multivariate_normal(
             np.zeros(D), (1 / gamma) * np.eye(D), size=k_new
         ).T
 
-        Z_new = np.zeros((D, K_new), dtype=np.int64)
+        params_new.Z = np.zeros((D, K_new), dtype=np.int64)
 
-        Z_new[:, :num_non_singletons] = model.params.Z[:, non_singleton_idxs]
+        params_new.Z[:, :num_non_singletons] = model.params.Z[:, non_singleton_idxs]
 
-        Z_new[row_idx, num_non_singletons:] = 1
-
-        params_new = Parameters(gamma, F_new, S, V_new, Z_new)
+        params_new.Z[row_idx, num_non_singletons:] = 1
 
         log_p_new = model.data_dist.log_p_row(model.data, params_new, row_idx)
 
@@ -509,34 +493,3 @@ def get_singletons_idxs(Z, row_idx):
     m -= Z[row_idx]
 
     return np.atleast_1d(np.squeeze(np.where(m == 0)))
-
-
-#=========================================================================
-# Benchmark utils
-#=========================================================================
-def get_rmse(data, params):
-    X_true = data
-
-    X_pred = np.dot(params.W, params.F)
-
-    return np.sqrt(np.mean((X_true - X_pred)**2))
-
-
-def get_min_error(params_pred, params_true):
-    W_pred = params_pred.W
-
-    W_true = params_true.W
-
-    K_pred = W_pred.shape[1]
-
-    K_true = W_true.shape[1]
-
-    min_error = float('inf')
-
-    for perm in itertools.permutations(range(K_pred)):
-        error = np.sqrt(np.mean((W_pred[:, perm[:K_true]] - W_true)**2))
-
-        if error < min_error:
-            min_error = error
-
-    return min_error

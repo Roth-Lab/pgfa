@@ -2,7 +2,7 @@ import numpy as np
 
 from pgfa.utils import get_b_cubed_score
 
-import pgfa.feature_allocation_priors
+import pgfa.feature_allocation_distributions
 import pgfa.models.nsfa
 import pgfa.updates
 
@@ -16,13 +16,11 @@ def main():
     N_train = 1000
     N_test = 1000
 
-    feat_alloc_prior = pgfa.feature_allocation_priors.BetaBernoulliFeatureAllocationDistribution(1, 1, K)
+    feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K)
 
-    feat_alloc_prior = pgfa.feature_allocation_priors.IndianBuffetProcessDistribution()
+    params_train = get_test_params(feat_alloc_dist, N_train, D, alpha=10, gamma=0.1, seed=0)
 
-    params_train = get_test_params(feat_alloc_prior, N_train, D, seed=0)
-
-    params_test = get_test_params(feat_alloc_prior, N_test, D, params=params_train, seed=1)
+    params_test = get_test_params(feat_alloc_dist, N_test, D, params=params_train, seed=1)
 
     data_train = get_data(params_train)
 
@@ -30,7 +28,7 @@ def main():
 
     singletons_updater = pgfa.models.nsfa.PriorSingletonsUpdater()
 
-    singletons_updater = pgfa.models.nsfa.CollapsedSingletonsUpdater()
+    singletons_updater = None
 
     feat_alloc_updater = pgfa.updates.GibbsMixtureUpdater(
         pgfa.updates.ParticleGibbsUpdater(
@@ -38,21 +36,15 @@ def main():
         )
     )
 
+#     feat_alloc_updater = pgfa.updates.RowGibbsUpdater()
+
 #     feat_alloc_updater = pgfa.updates.GibbsUpdater(singletons_updater=singletons_updater)
 
-    model_updater = pgfa.models.nsfa.NonparametricSparaseFactorAnalysisModelUpdater(feat_alloc_updater)
+    model_updater = pgfa.models.nsfa.ModelUpdater(feat_alloc_updater)
 
-    feat_alloc_prior = pgfa.feature_allocation_priors.IndianBuffetProcessDistribution()
+    feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K)
 
-    model = pgfa.models.nsfa.NonparametricSparaseFactorAnalysisModel(data_train, feat_alloc_prior)
-
-    model.params.F = np.random.normal(0, 1, size=(1, N_train))
-
-    model.params.V = np.random.normal(0, 1, size=(D, 1))
-
-    model.params.Z = np.random.randint(0, 2, size=(D, 1))
-
-#     model.params = params_train.copy()
+    model = pgfa.models.nsfa.Model(data_train, feat_alloc_dist)
 
     print(np.sum(params_train.Z, axis=0))
 
@@ -90,7 +82,7 @@ def get_data(params):
     return data
 
 
-def get_test_params(feat_alloc_prior, num_data_points, num_observed_dims, params=None, seed=None):
+def get_test_params(feat_alloc_dist, num_data_points, num_observed_dims, alpha=1, gamma=1, params=None, seed=None):
     if seed is not None:
         np.random.seed(seed)
 
@@ -98,9 +90,7 @@ def get_test_params(feat_alloc_prior, num_data_points, num_observed_dims, params
     N = num_data_points
 
     if params is None:
-        gamma = 1
-
-        Z = feat_alloc_prior.rvs(D)
+        Z = feat_alloc_dist.rvs(alpha, D)
 
         K = Z.shape[1]
 
@@ -111,6 +101,8 @@ def get_test_params(feat_alloc_prior, num_data_points, num_observed_dims, params
         F = np.random.normal(0, 1, size=(K, N))
 
     else:
+        alpha = params.alpha
+
         gamma = params.gamma
 
         Z = params.Z.copy()
@@ -123,7 +115,9 @@ def get_test_params(feat_alloc_prior, num_data_points, num_observed_dims, params
 
         F = np.random.normal(0, 1, size=(K, N))
 
-    return pgfa.models.nsfa.Parameters(gamma, F, S, V, Z)
+    return pgfa.models.nsfa.Parameters(
+        alpha, np.ones(2), gamma, np.ones(2), F, S, np.ones(2), V, Z
+    )
 
 
 def get_min_error(params_pred, params_true):
