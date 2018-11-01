@@ -1,45 +1,45 @@
+import numba
 import numpy as np
 import time
 
 
-def feature_mat_to_dict(Z):
-    Z_dict = {}
-
-    for n in range(Z.shape[0]):
-        Z_dict[n] = set(np.where(Z[n] == 1)[0])
-
-    return Z_dict
-
-
+@numba.njit
 def get_b_cubed_score(features_true, features_pred):
-    features_true = feature_mat_to_dict(features_true)
-
-    features_pred = feature_mat_to_dict(features_pred)
-
     n = len(features_pred)
 
-    p = []
+    size = (n * (n + 1)) // 2
 
-    r = []
+    p = np.zeros(size)
+
+    r = np.zeros(size)
+
+    idx = 0
 
     for i in range(n):
         for j in range(i, n):
+            c = np.sum(np.logical_and(features_pred[i] == 1, features_pred[j] == 1))
 
-            c = len(set(features_pred[i]) & set(features_pred[j]))
-
-            l = len(set(features_true[i]) & set(features_true[j]))
+            l = np.sum(np.logical_and(features_true[i] == 1, features_true[j] == 1))
 
             num = min(c, l)
 
             if c > 0:
-                p.append(num / c)
+                p[idx] = num / c
+
+            else:
+                p[idx] = np.nan
 
             if l > 0:
-                r.append(num / l)
+                r[idx] = num / l
 
-    p = sum(p) / max(len(p), 1)
+            else:
+                r[idx] = np.nan
 
-    r = sum(r) / max(len(r), 1)
+            idx += 1
+
+    p = np.nanmean(p)
+
+    r = np.nanmean(r)
 
     f = 2 * (p * r) / max((p + r), 1)
 
