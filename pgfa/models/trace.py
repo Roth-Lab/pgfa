@@ -7,11 +7,51 @@ class TraceReader(object):
     def __init__(self, file_name):
         self._fh = h5py.File(file_name, 'r')
 
+        self._trace_shape_attrs = {}
+
+        for name in self._fh.keys():
+            if 'shape' not in self._fh[name].attrs:
+                self._trace_shape_attrs[name] = ()
+
+            else:
+                self._trace_shape_attrs[name] = list(json.loads(self._fh[name].attrs['shape']))
+
     def __enter__(self):
         return self
 
     def __exit__(self, *args):
         self.close()
+
+    def __iter__(self):
+        trace = {}
+
+        trace_shape = {}
+
+        for name in self._fh.keys():
+            trace[name] = self._fh[name].value
+
+            trace_shape[name] = self._get_trace_shape
+
+        for idx in range(self.num_iters):
+            K = trace['K'][idx]
+
+            row = {}
+
+            row['K'] = K
+
+            for name in self._fh.keys():
+                if name in ['data', 'iter', 'D', 'K', 'N']:
+                    continue
+
+                elif name == 'time':
+                    row[name] = trace[name][idx]
+
+                else:
+                    shape = self._get_trace_shape(self._trace_shape_attrs[name], K)
+
+                    row[name] = trace[name][idx].reshape(shape)
+
+            yield row
 
     @property
     def data(self):
@@ -47,16 +87,16 @@ class TraceReader(object):
                 row[name] = self._fh[name][idx]
 
             else:
-                shape = self._get_trace_shape(name, K)
+                shape = self._get_trace_shape(self._trace_shape_attrs[name], K)
 
                 row[name] = self._fh[name][idx].reshape(shape)
 
         return row
 
-    def _get_trace_shape(self, name, K):
+    def _get_trace_shape(self, shape_attr, K):
         shape_map = {'D': self.D, 'K': K, 'N': self.N}
 
-        shape = list(json.loads(self._fh[name].attrs['shape']))
+        shape = list(shape_attr)
 
         for i, x in enumerate(shape):
             if x in shape_map:
