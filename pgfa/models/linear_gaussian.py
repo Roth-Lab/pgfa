@@ -231,26 +231,51 @@ class CollapsedDataDistribution(pgfa.models.base.AbstractDataDistribution):
     def log_p_row(self, data, params, row_idx):
         t_v = params.tau_v
         t_x = params.tau_x
-        Z = params.Z
+        Z = params.Z.astype(np.float64)
         X = data
 
         D = params.D
         K = params.K
         N = params.N
 
-        M = np.linalg.inv(Z.T @ Z + (t_v / t_x) * np.eye(K))
-
         log_p = 0
-
-        log_p += 0.5 * (N - K) * D * t_x
 
         log_p += 0.5 * K * D * t_v
 
         log_p -= 0.5 * N * D * np.log(2 * np.pi)
 
-        log_p += 0.5 * D * np.log(np.linalg.det(M))
+        for d in range(D):
+            idxs = ~np.isnan(X[:, d])
 
-        log_p -= 0.5 * t_x * np.trace(X.T @ (np.eye(N) - Z @ M @ Z.T) @ X)
+            N_tmp = np.sum(idxs)
+
+            X_tmp = X[idxs, d]
+
+            Z_tmp = Z[idxs]
+
+            M = scipy.linalg.inv(Z_tmp.T @ Z_tmp + (t_v / t_x) * np.eye(K))
+
+            log_p -= 0.5 * N_tmp * np.log(2 * np.pi)
+
+            log_p += 0.5 * (N_tmp - K) * t_x
+
+            log_p += 0.5 * np.log(scipy.linalg.det(M))
+
+            log_p -= 0.5 * t_x * X_tmp.T @ (np.eye(N_tmp) - Z_tmp @ M @ Z_tmp.T) @ X_tmp
+
+#         M = np.linalg.inv(Z.T @ Z + (t_v / t_x) * np.eye(K))
+#
+#         log_p = 0
+#
+#         log_p += 0.5 * (N - K) * D * t_x
+#
+#         log_p += 0.5 * K * D * t_v
+#
+#         log_p -= 0.5 * N * D * np.log(2 * np.pi)
+#
+#         log_p += 0.5 * D * np.log(np.linalg.det(M))
+#
+#         log_p -= 0.5 * t_x * np.trace(X.T @ (np.eye(N) - Z @ M @ Z.T) @ X)
 
         return log_p
 
