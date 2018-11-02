@@ -109,24 +109,6 @@ class Parameters(pgfa.models.base.AbstractParameters):
 #=========================================================================
 # Updates
 #=========================================================================
-# def update_V(model):
-#     data = model.data
-#     params = model.params
-#
-#     t_v = params.tau_v
-#     t_x = params.tau_x
-#     Z = params.Z.astype(np.float64)
-#     X = np.nan_to_num(data)
-#
-#     M = Z.T @ Z + (t_v / t_x) * np.eye(params.K)
-#
-#     model.params.V = scipy.stats.matrix_normal.rvs(
-#         mean=scipy.linalg.solve(M, Z.T @ X),
-#         rowcov=np.linalg.inv(t_x * M),
-#         colcov=np.eye(params.D)
-#     )
-
-
 def update_V(model):
     data = model.data
     params = model.params
@@ -155,35 +137,6 @@ def update_V(model):
         )
 
     model.params.V = V
-
-# def update_V(model):
-#     tau_v = model.params.tau_v
-#     tau_x = model.params.tau_x
-#     Z = model.params.Z.astype(np.float128)
-#     X = model.data
-#
-#     D = model.params.D
-#     K = model.params.K
-#
-#     V = np.zeros((K, D))
-#
-#     for d in range(D):
-#         x_ind = (~np.isnan(X[:, d]))
-#
-#         X_tmp = X[x_ind, d]
-#
-#         Z_tmp = Z[x_ind, :]
-#
-#         M_inv = Z_tmp.T @ Z_tmp + (tau_v / tau_x) * np.eye(K) + np.eye(K)
-#
-#         C = scipy.linalg.cho_factor(M_inv)
-#
-#         eps = np.random.normal(0, 1, size=(K,))
-#
-#         V[:, d] = scipy.linalg.solve_triangular(C[0], eps, lower=C[1]) + \
-#             scipy.linalg.cho_solve(C, Z_tmp.T @ X_tmp)
-#
-#     model.params.V = V
 
 
 def update_tau_v(model):
@@ -263,20 +216,6 @@ class CollapsedDataDistribution(pgfa.models.base.AbstractDataDistribution):
 
             log_p -= 0.5 * t_x * X_tmp.T @ (np.eye(N_tmp) - Z_tmp @ M @ Z_tmp.T) @ X_tmp
 
-#         M = np.linalg.inv(Z.T @ Z + (t_v / t_x) * np.eye(K))
-#
-#         log_p = 0
-#
-#         log_p += 0.5 * (N - K) * D * t_x
-#
-#         log_p += 0.5 * K * D * t_v
-#
-#         log_p -= 0.5 * N * D * np.log(2 * np.pi)
-#
-#         log_p += 0.5 * D * np.log(np.linalg.det(M))
-#
-#         log_p -= 0.5 * t_x * np.trace(X.T @ (np.eye(N) - Z @ M @ Z.T) @ X)
-
         return log_p
 
 
@@ -286,6 +225,11 @@ class CollapsedParametersDistribution(pgfa.models.base.AbstractParametersDistrib
         t_x = params.tau_x
 
         log_p = 0
+
+        # Gamma prior on $\alpha$
+        a = params.alpha_prior[0]
+        b = params.alpha_prior[1]
+        log_p += scipy.stats.gamma.logpdf(t_v, a, scale=(1 / b))
 
         # Gamma prior on $\tau_{a}$
         a = params.tau_v_prior[0]
@@ -336,6 +280,11 @@ class UncollapsedParametersDistribution(pgfa.models.base.AbstractParametersDistr
 
         log_p = 0
 
+        # Gamma prior on $\alpha$
+        a = params.alpha_prior[0]
+        b = params.alpha_prior[1]
+        log_p += scipy.stats.gamma.logpdf(t_v, a, scale=(1 / b))
+
         # Gamma prior on $\tau_{a}$
         a = params.tau_v_prior[0]
         b = params.tau_v_prior[1]
@@ -347,17 +296,12 @@ class UncollapsedParametersDistribution(pgfa.models.base.AbstractParametersDistr
         log_p += scipy.stats.gamma.logpdf(t_x, a, scale=(1 / b))
 
         # Prior on V
-#         log_p += scipy.stats.matrix_normal.logpdf(
-#             V,
-#             mean=np.zeros((K, D)),
-#             colcov=np.eye(D),
-#             rowcov=(1 / t_v) * np.eye(K)
-#         )
-
-        for k in range(K):
-            log_p += scipy.stats.multivariate_normal.logpdf(
-                V[k], np.zeros(D), (1 / t_v) * np.eye(D)
-            )
+        log_p += scipy.stats.matrix_normal.logpdf(
+            V,
+            mean=np.zeros((K, D)),
+            colcov=np.eye(D),
+            rowcov=(1 / t_v) * np.eye(K)
+        )
 
         return log_p
 
