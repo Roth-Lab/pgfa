@@ -283,12 +283,18 @@ def log_p_row(F, N, S, X, V, Z, row_idx):
 
 class ParameterDistribution(pgfa.models.base.AbstractParametersDistribution):
     def log_p(self, params):
+        alpha = params.alpha
         gamma = params.gamma
         F = params.F
         S = params.S
         V = params.V
 
         log_p = 0
+
+        # Gamma prior on $\alpha$
+        a = params.alpha_prior[0]
+        b = params.alpha_prior[1]
+        log_p += scipy.stats.gamma.logpdf(alpha, a, scale=(1 / b))
 
         # Common factors prior
         log_p += np.sum(
