@@ -271,6 +271,7 @@ class UncollapsedDataDistribution(pgfa.models.base.AbstractDataDistribution):
 
 class UncollapsedParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
     def log_p(self, params):
+        alpha = params.alpha
         t_v = params.tau_v
         t_x = params.tau_x
         V = params.V
@@ -283,7 +284,7 @@ class UncollapsedParametersDistribution(pgfa.models.base.AbstractParametersDistr
         # Gamma prior on $\alpha$
         a = params.alpha_prior[0]
         b = params.alpha_prior[1]
-        log_p += scipy.stats.gamma.logpdf(t_v, a, scale=(1 / b))
+        log_p += scipy.stats.gamma.logpdf(alpha, a, scale=(1 / b))
 
         # Gamma prior on $\tau_{a}$
         a = params.tau_v_prior[0]
