@@ -1,5 +1,6 @@
 import numba
 import numpy as np
+import scipy.stats
 
 from pgfa.math_utils import discrete_rvs, log_beta, log_factorial, do_metropolis_hastings_accept_reject
 
@@ -15,6 +16,16 @@ def get_feature_allocation_distribution(K=None):
 
 
 class BetaBernoulliFeatureAllocationDistribution(object):
+    """ Finite Beta-Bernoulli feature allocation model with feature weights marginalized.
+
+    Note: We define the Beta parameters as $a=\frac{\alpha}{K}$ and $b=1$.
+
+    Parameters
+    ----------
+    K: int
+        Number of features.
+    """
+
     def __init__(self, K):
         self.K = K
 
@@ -84,6 +95,9 @@ class BetaBernoulliFeatureAllocationDistribution(object):
 
 
 class IndianBuffetProcessDistribution(object):
+    """ IBP feature allocation distributions.
+    """
+
     def get_feature_probs(self, params, row_idx):
         Z = params.Z
 
@@ -168,17 +182,32 @@ class IndianBuffetProcessDistribution(object):
 
 
 def update_alpha(model):
+    """ Metropolis-Hastings update of the Beta-Bernoulli or IBP concentration parameter.
+
+    Note: The model parameters will be updated in place.
+
+    Parameters
+    ----------
+    model: pgfa.models.base.AbstractModel
+    """
+    a = model.params.alpha_prior[0]
+    b = model.params.alpha_prior[1]
+
     alpha_old = model.params.alpha
 
     log_p_old = model.feat_alloc_dist.log_p(model.params)
 
-    alpha_new = np.random.gamma(model.params.alpha_prior[0], scale=(1 / model.params.alpha_prior[1]))
+    alpha_new = scipy.stats.gamma.rvs(a, scale=(1 / b))
 
     model.params.alpha = alpha_new
 
     log_p_new = model.feat_alloc_dist.log_p(model.params)
 
-    if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, 0, 0):
+    log_q_old = scipy.stats.gamma.logpdf(alpha_old, a, scale=(1 / b))
+
+    log_q_new = scipy.stats.gamma.logpdf(alpha_new, a, scale=(1 / b))
+
+    if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, log_q_new, log_q_old):
         model.params.alpha = alpha_new
 
     else:
@@ -186,6 +215,15 @@ def update_alpha(model):
 
 
 def update_alpha_gibbs(model):
+    """ Gibbs update of the IBP concentration parameter.
+
+    Note: The model parameters will be updated in place.
+    Note: This update is not valid for the Beta-Bernoulli distribution.
+
+    Parameters
+    ----------
+    model: pgfa.models.base.AbstractModel
+    """
     params = model.params
     priors = model.priors
 
@@ -201,7 +239,7 @@ def update_alpha_gibbs(model):
 
     params.alpha = np.random.gamma(a, 1 / b)
 
-    return params
+    model.params = params
 
 
 @numba.njit(cache=True)
