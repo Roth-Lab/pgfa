@@ -61,7 +61,7 @@ class Model(pgfa.models.base.AbstractModel):
 
     def _init_joint_dist(self, feat_alloc_dist):
         self.joint_dist = pgfa.models.base.JointDistribution(
-            DataDistribution(), feat_alloc_dist, ParameterDistribution()
+            DataDistribution(), feat_alloc_dist, ParametersDistribution()
         )
 
 
@@ -281,7 +281,7 @@ def log_p_row(F, N, S, X, V, Z, row_idx):
     return log_p
 
 
-class ParameterDistribution(pgfa.models.base.AbstractParametersDistribution):
+class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
     def log_p(self, params):
         alpha = params.alpha
         gamma = params.gamma
