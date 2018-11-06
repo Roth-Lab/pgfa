@@ -4,37 +4,15 @@ import scipy.stats
 
 from pgfa.math_utils import bernoulli_rvs, do_metropolis_hastings_accept_reject
 
+import pgfa.models.base
 
-class LatentFactorRelationalModel(object):
-    def __init__(self, data, feat_alloc_prior, params=None, priors=None, symmetric=True):
-        self.data = data
 
-        self.feat_alloc_prior = feat_alloc_prior
+class Model(pgfa.models.base.AbstractModel):
+    @staticmethod
+    def get_default_params(data, feat_alloc_dist):
+        N = data.shape[1]
 
-        if params is None:
-            params = self.get_params_from_data()
-
-        self.params = params
-
-        if priors is None:
-            priors = Priors()
-
-        self.priors = priors
-
-        self.data_dist = DataDistribution()
-
-        self.joint_dist = JointDistribution(feat_alloc_prior, priors, symmetric=symmetric)
-
-        self.symmetric = symmetric
-
-    @property
-    def log_p(self):
-        return self.joint_dist.log_p(self.data, self.params)
-
-    def get_params_from_data(self):
-        N = self.data.shape[1]
-
-        Z = self.feat_alloc_prior.rvs(N)
+        Z = feat_alloc_dist.rvs(1, N)
 
         K = Z.shape[1]
 
@@ -48,7 +26,19 @@ class LatentFactorRelationalModel(object):
 
             V = V + V.T - np.diag(np.diag(V))
 
-        return Parameters(1, V, Z)
+        return Parameters(1, np.ones(2), 1, np.ones(2), V, Z)
+
+    def __init__(self, data, feat_alloc_dist, params=None, symmetric=True):
+        self.symmetric = symmetric
+
+        super().__init__(data, feat_alloc_dist, params=params)
+
+    def _init_joint_dist(self, feat_alloc_dist):
+        self.joint_dist = pgfa.models.base.JointDistribution(
+            DataDistribution(),
+            feat_alloc_dist,
+            ParametersDistribution(symmetric=self.symmetric)
+        )
 
     def predict(self, method='max'):
         V = self.params.V
@@ -69,46 +59,67 @@ class LatentFactorRelationalModel(object):
                 elif method == 'random':
                     X[i, j] = bernoulli_rvs(p)
 
-                else:
+                elif method == 'prob':
                     X[i, j] = p
 
         return X
 
 
+class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
+    def _update_model_params(self, model):
+        update_V(model)
+
+        update_tau(model)
+
+
+class Parameters(pgfa.models.base.AbstractParameters):
+    def __init__(self, alpha, alpha_prior, tau, tau_prior, V, Z):
+        self.alpha = float(alpha)
+
+        self.alpha_prior = np.array(alpha_prior, dtype=np.float64)
+
+        self.tau = float(tau)
+
+        self.tau_prior = np.array(tau_prior, dtype=np.float64)
+
+        self.V = np.array(V, dtype=np.float64)
+
+        self.Z = np.array(Z, dtype=np.int8)
+
+    @property
+    def param_shapes(self):
+        return {
+            'alpha': (),
+            'alpha_prior': (2,),
+            'tau': (),
+            'tau_prior': (2,),
+            'V': ('K', 'K'),
+            'Z': ('N', 'K')
+        }
+
+    @property
+    def N(self):
+        return self.Z.shape[0]
+
+    def copy(self):
+        return Parameters(
+            self.alpha,
+            self.alpha_prior.copy(),
+            self.tau,
+            self.tau_prior.copy(),
+            self.V.copy(),
+            self.Z.copy()
+        )
+
+
 #=========================================================================
 # Updates
 #=========================================================================
-class LatentFactorRelationalModelUpdater(object):
-    def __init__(self, feat_alloc_updater):
-        self.feat_alloc_updater = feat_alloc_updater
+def update_V(model, proposal_precision=1):
+    data = model.data
+    params = model.params
+    symmetric = model.symmetric
 
-    def update(self, model):
-        self.feat_alloc_updater.update(model)
-
-        model.params = update_V(model.data, model.params, symmetric=model.symmetric)
-
-        model.params = update_tau(model.params, model.priors, symmetric=model.symmetric)
-
-        model.feat_alloc_prior.update(model.params.Z)
-
-
-def update_tau(params, priors, symmetric=True):
-    if symmetric:
-        a = priors.tau[0] + 0.5 * (0.5 * params.K * (params.K + 1))
-
-        b = priors.tau[1] + 0.5 * np.sum(np.square(np.triu(params.V)))
-
-    else:
-        a = priors.tau[0] + 0.5 * params.K ** 2
-
-        b = priors.tau[1] + 0.5 * np.sum(np.square(params.V.flatten()))
-
-    params.tau = np.random.gamma(a, 1 / b)
-
-    return params
-
-
-def update_V(data, params, proposal_precision=1, symmetric=True):
     density = DataDistribution()
 
     proposal_std = 1 / np.sqrt(proposal_precision)
@@ -171,16 +182,32 @@ def update_V(data, params, proposal_precision=1, symmetric=True):
                 else:
                     params.V[i, j] = v_old
 
-    return params
+    model.params = params
+
+
+def update_tau(model):
+    params = model.params
+    symmetric = model.symmetric
+
+    if symmetric:
+        a = params.tau_prior[0] + 0.5 * (0.5 * params.K * (params.K + 1))
+
+        b = params.tau_prior[1] + 0.5 * np.sum(np.square(np.triu(params.V)))
+
+    else:
+        a = params.tau_prior[0] + 0.5 * params.K ** 2
+
+        b = params.tau_prior[1] + 0.5 * np.sum(np.square(params.V.flatten()))
+
+    params.tau = scipy.stats.gamma.rvs(a, scale=(1 / b))
+
+    model.params = params
 
 
 #=========================================================================
 # Densities and proposals
 #=========================================================================
-class DataDistribution(object):
-    def __init__(self):
-        pass
-
+class DataDistribution(pgfa.models.base.AbstractDataDistribution):
     def log_p(self, data, params):
         log_p = 0
 
@@ -193,24 +220,12 @@ class DataDistribution(object):
         return _log_p_row(params.V, data, params.Z.astype(np.float64), row_idx)
 
 
-class JointDistribution(object):
-    def __init__(self, feat_alloc_prior, priors, symmetric=True):
-        self.data_dist = DataDistribution()
-
-        self.feat_alloc_prior = feat_alloc_prior
-
-        self.priors = priors
-
+class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
+    def __init__(self, symmetric=True):
         self.symmetric = symmetric
 
-    def log_p(self, data, params):
+    def log_p(self, params):
         log_p = 0
-
-        # Binary matrix prior
-        log_p += self.feat_alloc_prior.log_p(params.Z)
-
-        # Data
-        log_p += self.data_dist.log_p(data, params)
 
         # Prior
         if self.symmetric:
@@ -262,41 +277,6 @@ def _get_log_p_sigmoid(i, j, X, V, Z):
             log_p = -np.log1p(f)
 
     return log_p
-
-
-#=========================================================================
-# Container classes
-#=========================================================================
-class Parameters(object):
-    def __init__(self, tau, V, Z):
-        self.tau = tau
-
-        self.V = V
-
-        self.Z = Z
-
-    @property
-    def K(self):
-        return self.Z.shape[1]
-
-    @property
-    def N(self):
-        return self.Z.shape[0]
-
-    def copy(self):
-        return Parameters(
-            self.tau,
-            self.V.copy(),
-            self.Z.copy()
-        )
-
-
-class Priors(object):
-    def __init__(self, tau=None):
-        if tau is None:
-            tau = np.ones(2)
-
-        self.tau = tau
 
 
 #=========================================================================
