@@ -157,11 +157,11 @@ class TraceWriter(object):
 
     @property
     def D(self):
-        return self._fh['D'][0]
+        return self._fh['D'][()]
 
     @property
     def N(self):
-        return self._fh['N'][0]
+        return self._fh['N'][()]
 
     def close(self):
         self._fh.close()
