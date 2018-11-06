@@ -98,6 +98,10 @@ class Parameters(pgfa.models.base.AbstractParameters):
         }
 
     @property
+    def D(self):
+        return self.N
+
+    @property
     def N(self):
         return self.Z.shape[0]
 
