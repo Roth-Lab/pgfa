@@ -11,14 +11,14 @@ def main():
     np.random.seed(0)
 
     num_iters = 100001
-    D = 10
+    D = 100
     K = 5
     N_train = 1000
     N_test = 1000
 
     feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K)
 
-    params_train = get_test_params(feat_alloc_dist, N_train, D, alpha=10, gamma=0.1, seed=0)
+    params_train = get_test_params(feat_alloc_dist, N_train, D, alpha=4, gamma=0.25, S=25, seed=0)
 
     params_test = get_test_params(feat_alloc_dist, N_test, D, params=params_train, seed=1)
 
@@ -26,7 +26,7 @@ def main():
 
     data_test = get_data(params_test)
 
-    singletons_updater = pgfa.models.nsfa.PriorSingletonsUpdater()
+#     singletons_updater = pgfa.models.nsfa.PriorSingletonsUpdater()
 
     singletons_updater = None
 
@@ -38,7 +38,7 @@ def main():
 
 #     feat_alloc_updater = pgfa.updates.RowGibbsUpdater()
 
-#     feat_alloc_updater = pgfa.updates.GibbsUpdater(singletons_updater=singletons_updater)
+    feat_alloc_updater = pgfa.updates.GibbsUpdater(singletons_updater=singletons_updater)
 
     model_updater = pgfa.models.nsfa.ModelUpdater(feat_alloc_updater)
 
@@ -46,19 +46,44 @@ def main():
 
     model = pgfa.models.nsfa.Model(data_train, feat_alloc_dist)
 
+    params_orig = model.params.copy()
+
+    model.params = params_train.copy()
+
+#     idxs = np.sum(model.params.Z, axis=0) > 0
+# 
+#     model.params.Z = model.params.Z[:, idxs]
+# 
+#     model.params.V = model.params.V[:, idxs]
+# 
+#     model.params.F = model.params.F[idxs]
+
+    log_p_true = model.log_p
+
+    model.params = params_orig
+
+
+#     model.params = params_train.copy()
+#
+#     model.params.Z = np.random.randint(0, 2, size=model.params.Z.shape)
+#
+#     model.params.Z = np.zeros(model.params.Z.shape)
+#
+#     model.params.Z[:, 0] = 1
+
     print(np.sum(params_train.Z, axis=0))
 
     print('@' * 100)
 
     for i in range(num_iters):
-        if i % 100 == 0:
+        if i % 10 == 0:
             print(
                 i,
                 model.params.Z.shape[1],
-                model.params.gamma,
-                model.log_p,
+                (model.log_p - log_p_true) / abs(log_p_true),
                 model.log_predictive_pdf(data_test),
                 model.rmse,
+                model.params.gamma
             )
 
             if model.params.K > 0:
@@ -71,7 +96,7 @@ def main():
 
             print('#' * 100)
 
-        model_updater.update(model)
+        model_updater.update(model, param_updates=10)
 
 
 def get_data(params):
@@ -82,7 +107,7 @@ def get_data(params):
     return data
 
 
-def get_test_params(feat_alloc_dist, num_data_points, num_observed_dims, alpha=1, gamma=1, params=None, seed=None):
+def get_test_params(feat_alloc_dist, num_data_points, num_observed_dims, alpha=1, gamma=1, S=1, params=None, seed=None):
     if seed is not None:
         np.random.seed(seed)
 
@@ -94,7 +119,7 @@ def get_test_params(feat_alloc_dist, num_data_points, num_observed_dims, alpha=1
 
         K = Z.shape[1]
 
-        S = 1 * np.ones(D)
+        S = S * np.ones(D)
 
         V = np.random.multivariate_normal(np.zeros(K), (1 / gamma) * np.eye(K), size=D)
 

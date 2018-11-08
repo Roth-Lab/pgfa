@@ -1,3 +1,4 @@
+import numba
 import numpy as np
 import scipy.stats
 
@@ -7,53 +8,121 @@ import pgfa.feature_allocation_distributions
 import pgfa.models.linear_gaussian
 import pgfa.updates
 
+from pgfa.models.trace import TraceReader, TraceWriter
+from pgfa.utils import Timer
+
 
 def main():
-    np.random.seed(0)
+    seed = 0
 
-    num_iters = 10001
+    np.random.seed(seed)
+
+    set_seed(seed)
+
+    num_iters = 101
+    time = 10000
     D = 10
-    K = 5
-    N = 100
+    K = 4
+    N = 10
 
-    data, data_true, params = simulate_data(D, N, K=K, tau_v=0.1, tau_x=10)
+    data, data_true, params = simulate_data(D, N, K=K, alpha=1 * K, prop_missing=0.1, tau_v=0.1, tau_x=10)
+
+    for d in range(D):
+        assert not np.all(np.isnan(data[:, d]))
+
+    for n in range(N):
+        assert not np.all(np.isnan(data[n]))
 
     model_updater = get_model_updater(
         collapsed_singletons=False, feat_alloc_updater_type='pga', ibp=(K is None), mixed_updates=True
     )
 
-    model = get_model(data, K=K)
+    model = get_model(data, collapsed=False, K=K)
+
+    model.params = params.copy()
+
+    model.params.Z = model.feat_alloc_dist.rvs(model.params.alpha, N)
 
     print(np.sum(params.Z, axis=0))
 
     print('@' * 100)
 
-    for i in range(num_iters):
+    timer = Timer()
+
+    trace = [float('-inf')]
+
+    i = 0
+
+    old_params = model.params.copy()
+
+    model.params = params.copy()
+
+    true_log_p = model.log_p
+
+    model.params = old_params.copy()
+
+    while timer.elapsed < time:
         if i % 10 == 0:
             print(
                 i,
-                model.params.alpha,
-                model.params.K,
                 model.log_p,
-                model.data_dist.log_p(model.data, model.params)
+                (model.log_p - true_log_p) / abs(true_log_p),
+                model.params.K,
+                model.params.alpha,
+                get_b_cubed_score(params.Z, model.params.Z)[0],
+                compute_l2_error(data, data_true, model.params)
             )
 
-            if model.params.K > 0:
-                print(get_b_cubed_score(params.Z, model.params.Z))
+            print(
+                model.data_dist.log_p(model.data, model.params),
+                model.feat_alloc_dist.log_p(model.params),
+                model.params_dist.log_p(model.params)
+            )
 
-            print(np.sum(model.params.Z, axis=0))
+            print(np.sum(np.abs(params.V - model.params.V)))
 
-            print(compute_l2_error(data, data_true, model.params))
+            print(model.params.tau_v, model.params.tau_x)
 
             print('#' * 100)
 
-        model_updater.update(model)
+        trace.append(model.log_p)
+
+        if (trace[-1] - trace[-2]) < -50:
+            print('@' * 100)
+            print('DEBUG')
+            print(trace[-1], trace[-2])
+            print(model.params.V)
+            print(model.params.tau_v)
+            print(model.params.tau_x)
+            print(np.sum(model.params.Z, axis=0))
+            print(np.sum(model.params.Z, axis=1).min(), np.sum(model.params.Z, axis=1).max())
+            print(model.params.Z.T @ model.params.Z)
+            print('@' * 100)
+
+            model.params = old_params
+
+            model_updater.update(model, update_alpha=True, update_feat_alloc=True, update_params=True)
+
+        old_params = model.params.copy()
+
+        timer.start()
+
+        model_updater.update(model, update_alpha=False, update_feat_alloc=True, update_params=False)
+
+        timer.stop()
+
+        i += 1
 
 
-def get_model(data, alpha=1, K=None):
+@numba.jit
+def set_seed(seed):
+    np.random.seed(seed)
+
+
+def get_model(data, alpha=1, collapsed=False, K=None):
     feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K=K)
 
-    return pgfa.models.linear_gaussian.Model(data, feat_alloc_dist, collapsed=False)
+    return pgfa.models.linear_gaussian.Model(data, feat_alloc_dist, collapsed=collapsed)
 
 
 def get_model_updater(collapsed_singletons=False, feat_alloc_updater_type='g', ibp=True, mixed_updates=False):
@@ -89,7 +158,7 @@ def get_model_updater(collapsed_singletons=False, feat_alloc_updater_type='g', i
     return pgfa.models.linear_gaussian.ModelUpdater(feat_alloc_updater)
 
 
-def simulate_data(D, N, alpha=1, K=None, tau_v=1, tau_x=1):
+def simulate_data(D, N, K=None, alpha=1, prop_missing=0, tau_v=1, tau_x=1):
     feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K=K)
 
     Z = feat_alloc_dist.rvs(alpha, N)
@@ -108,7 +177,7 @@ def simulate_data(D, N, alpha=1, K=None, tau_v=1, tau_x=1):
         colcov=np.eye(D)
     )
 
-    mask = np.random.uniform(0, 1, size=data_true.shape) <= 0.05
+    mask = np.random.uniform(0, 1, size=data_true.shape) <= prop_missing
 
     data = data_true.copy()
 
@@ -124,7 +193,7 @@ def compute_l2_error(data, data_true, params):
 
     data_pred = params.Z @ params.V
 
-    return (1 / np.sum(idxs)) * np.sum(np.square(data_pred[idxs] - data_true[idxs]))
+    return np.sqrt(np.mean(np.square(data_pred[idxs] - data_true[idxs])))
 
 
 if __name__ == '__main__':
