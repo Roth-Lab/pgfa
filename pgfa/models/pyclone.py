@@ -1,64 +1,99 @@
 import math
 import numba
 import numpy as np
+import scipy.optimize
+import scipy.stats
 
 from pgfa.math_utils import do_metropolis_hastings_accept_reject
 
+import pgfa.models.base
 
-class PyCloneFeatureAllocationModel(object):
-    def __init__(self, data, feat_alloc_prior, params=None, priors=None):
-        self.data = data
 
-        self.feat_alloc_prior = feat_alloc_prior
+class Model(pgfa.models.base.AbstractModel):
+    @staticmethod
+    def get_default_params(data, feat_alloc_dist):
+        D = data.shape[1]
+        N = data.shape[0]
 
-        if params is None:
-            params = self.get_params_from_data()
-
-        self.params = params
-
-        if priors is None:
-            priors = Priors()
-
-        self.priors = priors
-
-        self.data_dist = DataDistribution()
-
-        self.joint_dist = JointDistribution(feat_alloc_prior, priors)
-
-    @property
-    def log_p(self):
-        return self.joint_dist.log_p(self.data, self.params)
-
-    def get_params_from_data(self):
-        D = self.data.shape[1]
-        N = self.data.shape[0]
-
-        Z = self.feat_alloc_prior.rvs(N)
+        Z = feat_alloc_dist.rvs(1, N)
 
         K = Z.shape[1]
 
-        phi = np.random.dirichlet(np.ones(K), size=D)
+        eta = np.random.gamma(1, 1, size=(K, D))
 
-        return Parameters(1, phi, Z)
+        return Parameters(1, np.ones(2), eta, Z)
+
+    def _init_joint_dist(self, feat_alloc_dist):
+        self.joint_dist = pgfa.models.base.JointDistribution(
+            DataDistribution(), feat_alloc_dist, ParametersDistribution()
+        )
+
+
+class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
+    def _update_model_params(self, model):
+        update_eta_hmc(model)
+
+
+class Parameters(pgfa.models.base.AbstractParameters):
+    def __init__(self, alpha, alpha_prior, eta, Z):
+        self.alpha = alpha
+
+        self.alpha_prior = alpha_prior
+
+        self.eta = eta
+
+        self.Z = Z
+
+    @property
+    def phi(self):
+        return self.eta / np.sum(self.eta, axis=0)
+
+    @property
+    def D(self):
+        return self.eta.shape[1]
+
+    @property
+    def N(self):
+        return self.Z.shape[0]
+
+    def copy(self):
+        return Parameters(self.alpha, self.alpha_prior.copy(), self.eta.copy(), self.Z.copy())
 
 
 #=========================================================================
 # Updates
 #=========================================================================
-class PyCloneFeatureAllocationModelUpdater(object):
-    def __init__(self, feat_alloc_updater):
-        self.feat_alloc_updater = feat_alloc_updater
+def update_eta(model, precision=10):
+    data = model.data
+    params = model.params
 
-    def update(self, model):
-        self.feat_alloc_updater.update(model)
-
-        model.params = update_eta(model.data, model.params)
-
-        model.feat_alloc_prior.update(model.params.Z)
-
-
-def update_eta(data, params):
     data_dist = DataDistribution()
+
+    for d in np.random.permutation(params.D):
+        params_new = params.copy()
+
+        params_new.eta[:, d] = scipy.stats.dirichlet.rvs(params.phi[:, d] * precision) * precision
+
+        log_p_old = data_dist.log_p(data, params)
+
+        log_p_new = data_dist.log_p(data, params_new)
+
+        log_q_old = scipy.stats.dirichlet.logpdf(params.phi[:, d], params_new.phi[:, d] * precision)
+
+        log_q_new = scipy.stats.dirichlet.logpdf(params_new.phi[:, d], params.phi[:, d] * precision)
+
+        if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, log_q_new, log_q_old):
+            print('Accept')
+            params.eta[:, d] = params_new.eta[:, d]
+
+    model.params = params
+
+
+def update_eta_independent(model):
+    data = model.data
+    params = model.params
+
+    data_dist = model.data_dist
 
     params_old = params.copy()
 
@@ -66,25 +101,144 @@ def update_eta(data, params):
 
     for k in np.random.permutation(params.K):
         for d in np.random.permutation(params.D):
-            params_new.eta[d, k] = np.random.gamma(1, 1)
+            params_new.eta[k, d] = np.random.gamma(1, 1)
 
             log_p_old = data_dist.log_p(data, params_old)
 
             log_p_new = data_dist.log_p(data, params_new)
 
             if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, 0, 0):
-                params_old.eta[d, k] = params_new.eta[d, k]
+                params_old.eta[k, d] = params_new.eta[k, d]
 
             else:
-                params_new.eta[d, k] = params_old.eta[d, k]
+                params_new.eta[k, d] = params_old.eta[k, d]
 
-    return params_new
+    model.params = params_new
+
+
+def update_eta_map(model):
+    V = model.params.eta
+    Z = model.params.Z.astype(np.float64)
+    X = model.data
+
+    for d in range(model.params.D):
+        def f(v): return -1 * log_p(X[:, d, :], v, Z)
+
+        def g(v): return -1 * grad(X[:, d, :], v, Z)
+
+        b = np.tile([1e-6, np.inf], (model.params.K, 1))
+
+        res = scipy.optimize.minimize(f, V[:, d], jac=g, bounds=b)
+
+        V[:, d] = res['x']
+
+    model.params.eta = V
+
+
+def update_eta_hmc(model):
+    V = model.params.eta
+    Z = model.params.Z.astype(np.float64)
+    X = model.data
+
+    for d in range(model.params.D):
+        def f(v): return -1 * log_p(X[:, d, :], v, Z)
+
+        def g(v): return -1 * grad(X[:, d, :], v, Z)
+
+        V[:, d] = do_hmc(f, g, V[:, d], L=np.random.randint(0, 11))
+
+    model.params.eta = V
+
+
+def do_hmc(log_p, grad_log_p, params, eps=1e-3, L=10):
+    dim = len(params)
+
+    q = params
+    q_old = params
+    p = mvn_rvs(dim)
+    p_old = p
+
+    p = p - eps * grad_log_p(q) / 2
+
+    for i in range(L):
+        q = q + eps * p
+
+        if i < (L - 1):
+            p = p - eps * grad_log_p(q)
+
+    p = p - eps * grad_log_p(q) / 2
+
+    p = -p
+
+    U_new = log_p(q)
+    K_new = np.sum(p ** 2) / 2
+    U_old = log_p(q_old)
+    K_old = np.sum(p_old ** 2) / 2
+
+    diff = (U_new + K_new) - (U_old + K_old)
+
+    u = np.random.random()
+
+    if np.log(u) < diff:
+        q_new = q
+
+    else:
+        q_new = q_old
+
+    return q_new
+
+
+def mvn_rvs(dim, size=1):
+    return np.atleast_1d(
+        scipy.stats.multivariate_normal.rvs(np.zeros(dim), np.eye(dim), size=size)
+    )
+
+
+@numba.njit
+def log_p(X, v, Z):
+    N = Z.shape[0]
+    M = _get_M(v, Z)
+    log_p = 0
+    for n in range(N):
+        x = X[n, 1]
+        y = X[n, 0]
+        log_p += x * np.log(M[n]) + (y - x) * np.log(1 - M[n])
+    return log_p
+
+
+@numba.njit
+def grad(X, v, Z):
+    K = Z.shape[1]
+    N = Z.shape[0]
+    M = _get_M(v, Z)
+    g = np.zeros(K)
+    for n in range(N):
+        g += _grad(X[n, 1], X[n, 0], M[n], v, Z[n])
+    return g
+
+
+@numba.njit
+def _grad(x, y, m, v, z):
+    K = len(v)
+    grad_log_p_wrt_m = (x - y * m) / (m * (1 - m))
+    grad_m_wrt_v = np.zeros(K)
+    for k in range(K):
+        grad_m_wrt_v[k] = np.sum((z[k] - z) * v) / np.sum(v) ** 2
+    return grad_log_p_wrt_m * grad_m_wrt_v
+
+
+@numba.njit
+def _get_M(v, Z):
+    w = v / np.sum(v)
+    M = Z @ w
+    M = 0.01 * 1e-3 + 0.99 * M
+    return M
 
 
 #=========================================================================
 # Densities and proposals
 #=========================================================================
-class DataDistribution(object):
+class DataDistribution(pgfa.models.base.AbstractDataDistribution):
     def log_p(self, data, params):
         return _log_p(params.phi, data, params.Z)
 
@@ -94,6 +248,11 @@ class DataDistribution(object):
         z = params.Z[row_idx].astype(np.float64)
 
         return _log_p_row(phi, x, z)
+
+
+class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
+    def log_p(self, params):
+        return 0
 
 
 @numba.njit(cache=True)
@@ -109,37 +268,17 @@ def _log_p(phi, X, Z):
 
 
 @numba.njit(cache=True)
-def _log_p_row(phi, x, z):
+def _log_p_row(phi, x, z, eps=1e-6):
     log_p = 0
 
-    for d in range(len(phi)):
-        f = np.sum(z * phi[d])
+    for d in range(len(x)):
+        f = np.sum(phi[:, d] * z)
 
-        f = min(1 - 1e-6, max(1e-6, f))
+        f = min(1 - eps, max(eps, f))
 
         log_p += binomial_log_likelihood(x[d, 0], x[d, 1], f)
 
     return log_p
-
-
-class JointDistribution(object):
-    def __init__(self, feat_alloc_prior, priors):
-        self.data_dist = DataDistribution()
-
-        self.feat_alloc_prior = feat_alloc_prior
-
-        self.priors = priors
-
-    def log_p(self, data, params):
-        log_p = 0
-
-        # Binary matrix prior
-        log_p += self.feat_alloc_prior.log_p(params.Z)
-
-        # Data
-        log_p += self.data_dist.log_p(data, params)
-
-        return log_p
 
 
 @numba.njit(cache=True)
@@ -185,56 +324,18 @@ def log_gamma(x):
 
 
 #=========================================================================
-# Container classes
-#=========================================================================
-class Parameters(object):
-    def __init__(self, kappa, eta, Z):
-        self.kappa = kappa
-
-        self.eta = eta
-
-        self.Z = Z
-
-    @property
-    def phi(self):
-        phi = np.zeros(self.eta.shape)
-
-        for d in range(self.D):
-            phi[d] = self.eta[d] / np.sum(self.eta[d])
-
-        return phi
-
-    @property
-    def D(self):
-        return self.eta.shape[0]
-
-    @property
-    def K(self):
-        return self.Z.shape[1]
-
-    @property
-    def N(self):
-        return self.Z.shape[0]
-
-    def copy(self):
-        return Parameters(self.kappa, self.phi.copy(), self.Z.copy())
-
-
-class Priors(object):
-    pass
-
-
-#=========================================================================
 # Singletons updaters
 #=========================================================================
 class PriorSingletonsUpdater(object):
     def update_row(self, model, row_idx):
+        alpha = model.params.alpha
+
         D = model.params.D
         N = model.params.N
 
         k_old = len(get_singleton_idxs(model.params.Z, row_idx))
 
-        k_new = model.feat_alloc_prior.sample_num_singletons(model.params.Z)
+        k_new = np.random.poisson(alpha / N)
 
         if (k_new == 0) and (k_old == 0):
             return model.params
@@ -245,19 +346,19 @@ class PriorSingletonsUpdater(object):
 
         K_new = len(non_singleton_idxs) + k_new
 
-        eta_new = np.zeros((D, K_new))
+        params_new = model.params.copy()
 
-        eta_new[:, :num_non_singletons] = model.params.eta[:, non_singleton_idxs]
+        params_new.eta = np.zeros((K_new, D))
 
-        eta_new[:, num_non_singletons:] = np.random.gamma(1, 1, size=(D, k_new))
+        params_new.eta[:num_non_singletons] = model.params.eta[non_singleton_idxs]
 
-        Z_new = np.zeros((N, K_new), dtype=np.int64)
+        params_new.eta[num_non_singletons:] = np.random.gamma(1, 1, size=(k_new, D))
 
-        Z_new[:, :num_non_singletons] = model.params.Z[:, non_singleton_idxs]
+        params_new.Z = np.zeros((N, K_new), dtype=np.int64)
 
-        Z_new[row_idx, num_non_singletons:] = 1
+        params_new.Z[:, :num_non_singletons] = model.params.Z[:, non_singleton_idxs]
 
-        params_new = Parameters(model.params.kappa, eta_new, Z_new)
+        params_new.Z[row_idx, num_non_singletons:] = 1
 
         log_p_new = model.data_dist.log_p_row(model.data, params_new, row_idx)
 
