@@ -31,12 +31,14 @@ def main():
         )
     )
 
-#     feat_alloc_updater = pgfa.updates.GibbsUpdater(singletons_updater=singletons_updater)
-
-    model_updater = pgfa.models.pyclone.ModelUpdater(feat_alloc_updater)
+    feat_alloc_updater = pgfa.updates.GibbsUpdater(singletons_updater=singletons_updater)
 
     feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K)
 
+    model_updater = pgfa.models.pyclone.ParallelTemperingUpdater(data, feat_alloc_dist, feat_alloc_updater)
+    
+    model_updater = pgfa.models.pyclone.ModelUpdater(feat_alloc_updater)
+    
     model = pgfa.models.pyclone.Model(data, feat_alloc_dist)
 
 #     model.params.Z[:] = 0
@@ -84,8 +86,6 @@ def simulate_data(feat_alloc_prior, num_data_points, num_samples, alpha=1, kappa
     eta = np.random.gamma(kappa, scale=1, size=(K, D))
 
     phi = eta / np.sum(eta, axis=0)
-
-    print(phi)
 
     F = Z @ phi
 

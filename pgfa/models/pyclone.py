@@ -29,6 +29,72 @@ class Model(pgfa.models.base.AbstractModel):
         )
 
 
+class ParallelTemperingUpdater(pgfa.models.base.AbstractModelUpdater):
+    def __init__(self, data, feat_alloc_dist, feat_alloc_updater, num_chains=10):
+        self.feat_alloc_updater = feat_alloc_updater
+
+        self.temps = np.linspace(0, 1, num_chains)  # ** 3
+
+        self.iter = 0
+
+        self.params = []
+
+        for _ in self.temps:
+            self.params.append(Model.get_default_params(data, feat_alloc_dist))
+
+    def update(self, model, alpha_updates=1, feat_alloc_updates=1, param_updates=1):
+        for idx, (p, t) in enumerate(zip(self.params, self.temps)):
+            model.params = p
+
+            model.data_dist.temp = t
+
+            for _ in range(feat_alloc_updates):
+                self.feat_alloc_updater.update(model)
+
+            for _ in range(param_updates):
+                self._update_model_params(model)
+
+            for _ in range(alpha_updates):
+                pgfa.feature_allocation_distributions.update_alpha(model)
+
+            self.params[idx] = model.params.copy()
+
+        T = len(self.temps)
+
+        if self.iter % 2 == 0:
+            pairs = zip(range(0, T - 1, 2), range(1, T, 2))
+
+        else:
+            pairs = zip(range(1, T - 3, 2), range(2, T - 2, 2))
+
+        model.data_dist.temp = 1
+
+        for idx_l, idx_h in pairs:
+            t_l = self.temps[idx_l]
+
+            t_h = self.temps[idx_h]
+
+            log_p_new = (t_h - t_l) * model.data_dist.log_p(model.data, self.params[idx_l])
+
+            log_p_old = (t_h - t_l) * model.data_dist.log_p(model.data, self.params[idx_h])
+
+            if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, 0, 0):
+                print('Accept', idx_l, idx_h)
+
+                temp = self.params[idx_l]
+
+                self.params[idx_l] = self.params[idx_h]
+
+                self.params[idx_h] = temp
+
+        model.params = self.params[-1]
+
+        self.iter += 1
+
+    def _update_model_params(self, model):
+        update_eta_independent(model)
+
+
 class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
     def _update_model_params(self, model):
         update_eta_hmc(model)
@@ -239,15 +305,18 @@ def _get_M(v, Z):
 # Densities and proposals
 #=========================================================================
 class DataDistribution(pgfa.models.base.AbstractDataDistribution):
+    def __init__(self, temp=1):
+        self.temp = temp
+
     def log_p(self, data, params):
-        return _log_p(params.phi, data, params.Z)
+        return self.temp * _log_p(params.phi, data, params.Z)
 
     def log_p_row(self, data, params, row_idx):
         phi = params.phi
         x = data[row_idx]
         z = params.Z[row_idx].astype(np.float64)
 
-        return _log_p_row(phi, x, z)
+        return self.temp * _log_p_row(phi, x, z)
 
 
 class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
