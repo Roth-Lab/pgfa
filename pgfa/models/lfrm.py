@@ -73,12 +73,12 @@ class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
 
 
 class Parameters(pgfa.models.base.AbstractParameters):
-    def __init__(self, alpha, alpha_prior, tau, tau_prior, V, Z):
+    def __init__(self, alpha, alpha_prior, tau_v, tau_prior, V, Z):
         self.alpha = float(alpha)
 
         self.alpha_prior = np.array(alpha_prior, dtype=np.float64)
 
-        self.tau = float(tau)
+        self.tau_v = float(tau_v)
 
         self.tau_prior = np.array(tau_prior, dtype=np.float64)
 
@@ -91,7 +91,7 @@ class Parameters(pgfa.models.base.AbstractParameters):
         return {
             'alpha': (),
             'alpha_prior': (2,),
-            'tau': (),
+            'tau_v': (),
             'tau_prior': (2,),
             'V': ('K', 'K'),
             'Z': ('N', 'K')
@@ -109,7 +109,7 @@ class Parameters(pgfa.models.base.AbstractParameters):
         return Parameters(
             self.alpha,
             self.alpha_prior.copy(),
-            self.tau,
+            self.tau_v,
             self.tau_prior.copy(),
             self.V.copy(),
             self.Z.copy()
@@ -203,7 +203,7 @@ def update_tau(model):
 
         b = params.tau_prior[1] + 0.5 * np.sum(np.square(params.V.flatten()))
 
-    params.tau = scipy.stats.gamma.rvs(a, scale=(1 / b))
+    params.tau_v = scipy.stats.gamma.rvs(a, scale=(1 / b))
 
     model.params = params
 
@@ -234,12 +234,12 @@ class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
         # Prior
         if self.symmetric:
             log_p += np.sum(scipy.stats.norm.logpdf(
-                np.squeeze(params.V[np.triu_indices(params.K)]), 0, 1 / np.sqrt(params.tau)
+                np.squeeze(params.V[np.triu_indices(params.K)]), 0, 1 / np.sqrt(params.tau_v)
             ))
 
         else:
             log_p += np.sum(scipy.stats.norm.logpdf(
-                params.V.flatten(), 0, 1 / np.sqrt(params.tau)
+                params.V.flatten(), 0, 1 / np.sqrt(params.tau_v)
             ))
 
         return log_p
@@ -316,16 +316,16 @@ class PriorSingletonsUpdater(object):
         if model.symmetric:
             for i in range(num_non_singletons, K_new):
                 for j in range(i, K_new):
-                    V_new[i, j] = np.random.normal(0, 1 / np.sqrt(model.params.tau))
+                    V_new[i, j] = np.random.normal(0, 1 / np.sqrt(model.params.tau_v))
 
                     V_new[j, i] = V_new[i, j]
 
         else:
             for i in range(num_non_singletons, K_new):
                 for j in range(num_non_singletons, K_new):
-                    V_new[j, i] = np.random.normal(0, 1 / np.sqrt(model.params.tau))
+                    V_new[j, i] = np.random.normal(0, 1 / np.sqrt(model.params.tau_v))
 
-        params_new = Parameters(model.params.tau, V_new, Z_new)
+        params_new = Parameters(model.params.tau_v, V_new, Z_new)
 
         log_p_new = model.data_dist.log_p_row(model.data, params_new, row_idx)
 
