@@ -59,7 +59,7 @@ class TraceReader(object):
 
     @property
     def num_iters(self):
-        return self._fh['iter'][()]
+        return self._fh['iter'][()] + 1
 
     @property
     def D(self):
