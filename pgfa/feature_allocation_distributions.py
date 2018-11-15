@@ -122,6 +122,8 @@ class IndianBuffetProcessDistribution(object):
         alpha = params.alpha
         Z = params.Z
 
+        Z = Z[:, np.sum(Z, axis=0) > 0]
+
         K = Z.shape[1]
 
         N = Z.shape[0]
