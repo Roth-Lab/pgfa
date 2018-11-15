@@ -290,7 +290,7 @@ class PriorSingletonsUpdater(object):
     def update_row(self, model, row_idx):
         k_old = len(get_singleton_idxs(model.params.Z, row_idx))
 
-        k_new = model.feat_alloc_prior.sample_num_singletons(model.params.Z)
+        k_new = np.random.poisson(model.params.alpha / model.params.N)
 
         if (k_new == 0) and (k_old == 0):
             return model.params
