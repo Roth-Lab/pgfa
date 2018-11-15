@@ -325,19 +325,18 @@ class PriorSingletonsUpdater(object):
                 for j in range(num_non_singletons, K_new):
                     V_new[j, i] = np.random.normal(0, 1 / np.sqrt(model.params.tau))
 
-        params_new = Parameters(model.params.tau, V_new, Z_new)
+        params_new = model.params.copy()
+
+        params_new.V = V_new
+
+        params_new.Z = Z_new
 
         log_p_new = model.data_dist.log_p_row(model.data, params_new, row_idx)
 
         log_p_old = model.data_dist.log_p_row(model.data, model.params, row_idx)
 
         if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, 0, 0):
-            params = params_new
-
-        else:
-            params = model.params
-
-        return params
+            model.params = params_new
 
 
 def get_column_counts(Z, row_idx):
