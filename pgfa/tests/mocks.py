@@ -45,8 +45,6 @@ class MockParams(object):
 
         self.Z = np.random.randint(0, 2, size=(N, K))
 
-        self.Z = np.ones((N, K))
-
     @property
     def K(self):
         return self.Z.shape[1]

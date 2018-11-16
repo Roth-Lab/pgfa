@@ -4,8 +4,8 @@ from collections import defaultdict, Counter
 
 import numpy as np
 
-from pgfa.feature_allocation_priors import BetaBernoulliFeatureAllocationDistribution
-from pgfa.updates.feature_matrix import GibbsUpdater, ParticleGibbsUpdater, RowGibbsUpdater
+from pgfa.feature_allocation_distributions import BetaBernoulliFeatureAllocationDistribution
+from pgfa.updates import GibbsUpdater, ParticleGibbsUpdater, RowGibbsUpdater
 
 from pgfa.tests.exact_posterior import get_exact_posterior
 from pgfa.tests.mocks import MockDataDistribution, MockParams
@@ -56,11 +56,11 @@ class Test(unittest.TestCase):
 
         dist = MockDataDistribution()
 
-        feat_alloc_prior = BetaBernoulliFeatureAllocationDistribution(1, 1, self.K)
+        feat_alloc_dist = BetaBernoulliFeatureAllocationDistribution(self.K)
 
-        params = MockParams(self.K, self.N)
+        params = MockParams(2, self.K, self.N)
 
-        return TestModel(data, dist, feat_alloc_prior, params)
+        return TestModel(data, dist, feat_alloc_dist, params)
 
     def _get_pred_posterior(self, feat_alloc_updater, model, burnin=int(1e3), num_iters=int(1e3)):
         trace = Counter()
@@ -105,12 +105,12 @@ class Test(unittest.TestCase):
 
 
 class TestModel(object):
-    def __init__(self, data, dist, feat_alloc_prior, params):
+    def __init__(self, data, dist, feat_alloc_dist, params):
         self.data = data
 
         self.data_dist = dist
 
-        self.feat_alloc_prior = feat_alloc_prior
+        self.feat_alloc_dist = feat_alloc_dist
 
         self.params = params
 
@@ -120,7 +120,7 @@ class TestModel(object):
 
         log_p += self.data_dist.log_p(self.data, self.params)
 
-        log_p += self.feat_alloc_prior.log_p(self.params.Z)
+        log_p += self.feat_alloc_dist.log_p(self.params)
 
         return log_p
 
