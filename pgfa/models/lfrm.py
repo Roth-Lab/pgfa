@@ -124,8 +124,6 @@ def update_V(model, proposal_precision=1):
     params = model.params
     symmetric = model.symmetric
 
-    density = DataDistribution()
-
     proposal_std = 1 / np.sqrt(proposal_precision)
 
     if symmetric:
@@ -139,7 +137,7 @@ def update_V(model, proposal_precision=1):
 
                 params.V[j, i] = v_old
 
-                log_p_old = density.log_p(data, params)
+                log_p_old = model.joint_dist.log_p(data, params)
 
                 log_q_old = scipy.stats.norm.logpdf(v_old, v_new, proposal_std)
 
@@ -147,9 +145,9 @@ def update_V(model, proposal_precision=1):
 
                 params.V[j, i] = v_new
 
-                log_p_new = density.log_p(data, params)
+                log_p_new = model.joint_dist.log_p(data, params)
 
-                log_q_new = scipy.stats.norm.logpdf(v_new, v_new, proposal_std)
+                log_q_new = scipy.stats.norm.logpdf(v_new, v_old, proposal_std)
 
                 if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, log_q_new, log_q_old):
                     params.V[i, j] = v_new
@@ -170,15 +168,15 @@ def update_V(model, proposal_precision=1):
 
                 params.V[i, j] = v_old
 
-                log_p_old = density.log_p(data, params)
+                log_p_old = model.joint_dist.log_p(data, params)
 
                 log_q_old = scipy.stats.norm.logpdf(v_old, v_new, proposal_std)
 
                 params.V[i, j] = v_new
 
-                log_p_new = density.log_p(data, params)
+                log_p_new = model.joint_dist.log_p(data, params)
 
-                log_q_new = scipy.stats.norm.logpdf(v_new, v_new, proposal_std)
+                log_q_new = scipy.stats.norm.logpdf(v_new, v_old, proposal_std)
 
                 if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, log_q_new, log_q_old):
                     params.V[i, j] = v_new
