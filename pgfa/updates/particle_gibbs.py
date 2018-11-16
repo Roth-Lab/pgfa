@@ -1,3 +1,5 @@
+from collections import namedtuple
+
 import numba
 import numpy as np
 
@@ -30,6 +32,9 @@ class ParticleGibbsUpdater(FeatureAllocationMatrixUpdater):
         )
 
 
+Particle = namedtuple('Particle', ['log_p', 'log_w', 'parent', 'value'])
+
+
 def do_particle_gibbs_update(
         cols,
         data,
@@ -43,46 +48,36 @@ def do_particle_gibbs_update(
 
     T = len(cols)
 
-    log_p = np.zeros(num_particles)
-
-    log_p_old = np.zeros(num_particles)
-
     log_W = np.zeros(num_particles)
 
-    particles = np.zeros((num_particles, T), dtype=np.int64)
+    particles = [None for _ in range(num_particles)]
 
-    z = params.Z[row_idx].copy()
+    z = params.Z[row_idx, cols]
 
-    z_test = z.copy()
-
-    z_test[cols] = 0
+    Zs = np.zeros((num_particles, T))
 
     for t in range(T):
-        particles[0, t] = z[cols[t]]
-
         log_W = log_normalize(log_W)
 
-        log_p_old[:] = log_p[:]
-
         if t > 0:
-            log_W, particles = _resample(log_W, particles, conditional=True, threshold=resample_threshold)
+            log_W, particles, Zs = _resample(log_W, particles, Zs, conditional=True, threshold=resample_threshold)
 
         for i in range(num_particles):
             if i == 0:
-                idx = particles[0, t]
+                idx = z[t]
 
             else:
                 idx = -1
 
-            z_test[cols[:t]] = particles[i, :t]
+            params.Z[row_idx, cols] = Zs[i]
 
-            particles[i, t], log_p[i], log_norm = _propose(
-                cols[:(t + 1)], data, dist, feat_probs, params, row_idx, z_test, T, annealed=annealed, idx=idx
+            particles[i] = _propose(
+                cols[t], data, dist, feat_probs, params, particles[i], row_idx, t + 1, T, annealed=annealed, idx=idx
             )
 
-            log_w = log_norm - log_p_old[i]
+            Zs[i, t] = particles[i].value
 
-            log_W[i] = log_W[i] + log_w
+            log_W[i] = log_W[i] + particles[i].log_w
 
     log_W = log_normalize(log_W)
 
@@ -90,70 +85,84 @@ def do_particle_gibbs_update(
 
     idx = discrete_rvs(W)
 
-    z[cols] = particles[idx]
-
-    params.Z[row_idx] = z
+    params.Z[row_idx, cols] = Zs[idx]
 
     return params
 
 
 @numba.njit(cache=True)
-def _log_target_pdf(cols, feat_probs, log_p_x, z):
+def _propose_idx(col, feat_probs, log_p):
+    # Target
+    log_a = np.log(feat_probs[col])
 
-    log_p = 0
+    log_b = np.log(1 - feat_probs[col])
 
-    log_p += np.sum(z[cols] * np.log(feat_probs[cols]))
+    log_target = np.zeros(2)
 
-    log_p += np.sum((1 - z[cols]) * np.log(1 - feat_probs[cols]))
+    log_target[0] = log_p[0] + log_b
 
-    log_p += log_p_x
+    log_target[1] = log_p[1] + log_a
 
-    return log_p
+    # Sample
+    log_norm = log_sum_exp(log_target)
+
+    p = np.exp(log_target - log_norm)
+
+    idx = discrete_rvs(p)
+
+    return idx, log_norm - log_p[0]
 
 
 @numba.njit(cache=True)
-def _log_target_pdf_annealed(cols, feat_probs, log_p_x, z, T):
-    t = len(cols)
+def _propose_idx_annealed(col, feat_probs, log_p, t, T):
+    # Target
+    log_a = np.log(feat_probs[col])
 
-    log_p = 0
+    log_b = np.log(1 - feat_probs[col])
 
-    log_p += np.sum(z[cols] * np.log(feat_probs[cols]))
+    log_target = np.zeros(2)
 
-    log_p += np.sum((1 - z[cols]) * np.log(1 - feat_probs[cols]))
+    log_target[0] = (t / T) * log_p[0] + log_b
 
-    log_p += (t / T) * log_p_x
+    log_target[1] = (t / T) * log_p[1] + log_a
 
-    return log_p
+    # Sample
+    log_norm = log_sum_exp(log_target)
+
+    p = np.exp(log_target - log_norm)
+
+    idx = discrete_rvs(p)
+
+    return idx, log_norm - ((t - 1) / T) * log_p[0]
 
 
-def _propose(cols, data, dist, feat_probs, params, row_idx, z, T, annealed=False, idx=-1):
-    cols = np.array(cols, dtype=np.int64)
-
+def _propose(col, data, dist, feat_probs, params, parent_particle, row_idx, t, T, annealed=False, idx=-1):
     log_p = np.zeros(2)
 
-    for val in [0, 1]:
-        z[cols[-1]] = val
+    # Feature off
+    if parent_particle is None:
+        params.Z[row_idx, col] = 0
 
-        params.Z[row_idx] = z
+        log_p[0] = dist.log_p_row(data, params, row_idx)
 
-        log_p_x = dist.log_p_row(data, params, row_idx)
+    else:
+        log_p[0] = parent_particle.log_p
 
-        if annealed:
-            log_p[val] = _log_target_pdf_annealed(cols, feat_probs, log_p_x, z, T)
+    # Feature on
+    params.Z[row_idx, col] = 1
 
-        else:
-            log_p[val] = _log_target_pdf(cols, feat_probs, log_p_x, z)
+    log_p[1] = dist.log_p_row(data, params, row_idx)
 
-    log_norm = log_sum_exp(log_p)
+    if annealed:
+        prop_idx, log_w = _propose_idx_annealed(col, feat_probs, log_p, t, T)
+
+    else:
+        prop_idx, log_w = _propose_idx(col, feat_probs, log_p)
 
     if idx == -1:
-        p = np.exp(log_p - log_norm)
+        idx = prop_idx
 
-        idx = discrete_rvs(p)
-
-    idx = int(idx)
-
-    return idx, log_p[idx], log_norm
+    return Particle(log_p[idx], log_w, parent_particle, idx)
 
 
 def _get_ess(log_W):
@@ -162,13 +171,13 @@ def _get_ess(log_W):
     return 1 / np.sum(np.square(W))
 
 
-def _resample(log_W, particles, conditional=True, threshold=0.5):
-    num_features = len(log_W)
-
-    num_particles = particles.shape[0]
+def _resample(log_W, particles, Zs, conditional=True, threshold=0.5):
+    num_particles = len(particles)
 
     if (_get_ess(log_W) / num_particles) <= threshold:
-        new_particles = np.zeros(particles.shape, dtype=np.int64)
+        new_particles = []
+
+        new_Zs = np.zeros(Zs.shape)
 
         W = np.exp(log_W)
 
@@ -177,7 +186,9 @@ def _resample(log_W, particles, conditional=True, threshold=0.5):
         W = W / np.sum(W)
 
         if conditional:
-            new_particles[0] = particles[0]
+            new_particles.append(particles[0])
+
+            new_Zs[0] = Zs[0]
 
             multiplicity = np.random.multinomial(num_particles - 1, W)
 
@@ -188,9 +199,11 @@ def _resample(log_W, particles, conditional=True, threshold=0.5):
 
             idx = 0
 
-        for k in range(num_features):
+        for k in range(num_particles):
             for _ in range(multiplicity[k]):
-                new_particles[idx] = particles[k]
+                new_particles.append(particles[k])
+
+                new_Zs[idx] = Zs[k]
 
                 idx += 1
 
@@ -198,4 +211,22 @@ def _resample(log_W, particles, conditional=True, threshold=0.5):
 
         particles = new_particles
 
-    return log_W, particles
+        Zs = new_Zs
+
+    return log_W, particles, Zs
+
+
+def iter_particles(particle):
+    while particle is not None:
+        yield particle
+
+        particle = particle.parent
+
+
+def get_z(particle):
+    z = []
+
+    for p in iter_particles(particle):
+        z.append(p.value)
+
+    return z[::-1]
