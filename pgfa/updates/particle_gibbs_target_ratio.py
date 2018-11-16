@@ -52,7 +52,7 @@ def do_particle_gibbs_update(
 
     particles = [None for _ in range(num_particles)]
 
-    z = params.Z[row_idx].copy()
+    z = params.Z[row_idx, cols]
 
     Zs = np.zeros((num_particles, T))
 
@@ -60,11 +60,11 @@ def do_particle_gibbs_update(
         log_W = log_normalize(log_W)
 
         if t > 0:
-            log_W, particles = _resample(log_W, particles, conditional=True, threshold=resample_threshold)
+            log_W, particles, Zs = _resample(log_W, particles, Zs, conditional=True, threshold=resample_threshold)
 
         for i in range(num_particles):
             if i == 0:
-                idx = z[cols[t]]
+                idx = z[t]
 
             else:
                 idx = -1
@@ -99,9 +99,9 @@ def _propose_idx(col, feat_probs, log_p):
 
     log_target = np.zeros(2)
 
-    log_target[0] = log_b
+    log_target[0] = log_p[0] + log_b
 
-    log_target[1] = log_p[1] - log_p[0] + log_a
+    log_target[1] = log_p[1] + log_a
 
     # Sample
     log_norm = log_sum_exp(log_target)
@@ -110,7 +110,7 @@ def _propose_idx(col, feat_probs, log_p):
 
     idx = discrete_rvs(p)
 
-    return idx, log_norm
+    return idx, log_norm - log_p[0]
 
 
 @numba.njit(cache=True)
@@ -122,9 +122,9 @@ def _propose_idx_annealed(col, feat_probs, log_p, t, T):
 
     log_target = np.zeros(2)
 
-    log_target[0] = (1 / T) * log_p[0] + log_b
+    log_target[0] = (t / T) * log_p[0] + log_b
 
-    log_target[1] = (t / T) * log_p[1] - ((t - 1) / T) * log_p[0] + log_a
+    log_target[1] = (t / T) * log_p[1] + log_a
 
     # Sample
     log_norm = log_sum_exp(log_target)
@@ -133,7 +133,7 @@ def _propose_idx_annealed(col, feat_probs, log_p, t, T):
 
     idx = discrete_rvs(p)
 
-    return idx, log_norm
+    return idx, log_norm - ((t - 1) / T) * log_p[0]
 
 
 def _propose(col, data, dist, feat_probs, params, parent_particle, row_idx, t, T, annealed=False, idx=-1):
@@ -171,13 +171,13 @@ def _get_ess(log_W):
     return 1 / np.sum(np.square(W))
 
 
-def _resample(log_W, particles, conditional=True, threshold=0.5):
-    num_features = len(log_W)
-
+def _resample(log_W, particles, Zs, conditional=True, threshold=0.5):
     num_particles = len(particles)
 
     if (_get_ess(log_W) / num_particles) <= threshold:
         new_particles = []
+
+        new_Zs = np.zeros(Zs.shape)
 
         W = np.exp(log_W)
 
@@ -188,20 +188,32 @@ def _resample(log_W, particles, conditional=True, threshold=0.5):
         if conditional:
             new_particles.append(particles[0])
 
+            new_Zs[0] = Zs[0]
+
             multiplicity = np.random.multinomial(num_particles - 1, W)
+
+            idx = 1
 
         else:
             multiplicity = np.random.multinomial(num_particles, W)
 
-        for k in range(num_features):
+            idx = 0
+
+        for k in range(num_particles):
             for _ in range(multiplicity[k]):
                 new_particles.append(particles[k])
+
+                new_Zs[idx] = Zs[k]
+
+                idx += 1
 
         log_W = -np.log(num_particles) * np.ones(num_particles)
 
         particles = new_particles
 
-    return log_W, particles
+        Zs = new_Zs
+
+    return log_W, particles, Zs
 
 
 def iter_particles(particle):
