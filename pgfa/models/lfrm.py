@@ -221,7 +221,11 @@ class DataDistribution(pgfa.models.base.AbstractDataDistribution):
         return log_p
 
     def log_p_row(self, data, params, row_idx):
-        return _log_p_row(params.V, data, params.Z.astype(np.float64), row_idx)
+        if params.Z.shape[1] == 0:
+            return -np.inf
+
+        else:
+            return _log_p_row(params.V, data, params.Z.astype(np.float64), row_idx)
 
 
 class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
