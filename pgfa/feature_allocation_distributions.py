@@ -144,11 +144,9 @@ class IndianBuffetProcessDistribution(object):
         for h in range(num_histories):
             K_h = history_counts[h]
 
+            log_p += K_h * (log_factorial(m[h] - 1) + log_factorial(N - m[h]) - log_factorial(N))
+
             log_p -= log_factorial(K_h)
-
-            log_p += K_h * log_factorial(m[h] - 1) + K_h * log_factorial(N - m[h])
-
-            log_p -= history_counts[h] * log_factorial(N)
 
         return log_p
 
