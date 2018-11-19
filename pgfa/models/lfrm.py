@@ -20,7 +20,7 @@ class Model(pgfa.models.base.AbstractModel):
             V = np.zeros((K, K))
 
         else:
-            V = np.random.normal(0, 1, size=(K, K))
+            V = scipy.stats.norm.rvs(0, 1, size=(K, K))
 
             V = np.triu(V)
 
@@ -120,71 +120,77 @@ class Parameters(pgfa.models.base.AbstractParameters):
 # Updates
 #=========================================================================
 def update_V(model, proposal_precision=1):
-    data = model.data
-    params = model.params
-    symmetric = model.symmetric
-
-    proposal_std = 1 / np.sqrt(proposal_precision)
-
-    if symmetric:
-        for i in np.random.permutation(params.K):
-            for j in np.random.permutation(np.arange(i, params.K)):
-                v_old = params.V[i, j]
-
-                v_new = np.random.normal(v_old, proposal_std)
-
-                params.V[i, j] = v_old
-
-                params.V[j, i] = v_old
-
-                log_p_old = model.joint_dist.log_p(data, params)
-
-                log_q_old = scipy.stats.norm.logpdf(v_old, v_new, proposal_std)
-
-                params.V[i, j] = v_new
-
-                params.V[j, i] = v_new
-
-                log_p_new = model.joint_dist.log_p(data, params)
-
-                log_q_new = scipy.stats.norm.logpdf(v_new, v_old, proposal_std)
-
-                if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, log_q_new, log_q_old):
-                    params.V[i, j] = v_new
-
-                    params.V[j, i] = v_new
-
-                else:
-                    params.V[i, j] = v_old
-
-                    params.V[j, i] = v_old
+    if model.symmetric:
+        _update_V_symmetric(model, proposal_precision=proposal_precision)
 
     else:
-        for i in np.random.permutation(params.K):
-            for j in np.random.permutation(params.K):
-                v_old = params.V[i, j]
+        _update_V_full(model, proposal_precision=proposal_precision)
 
-                v_new = np.random.normal(v_old, proposal_std)
 
-                params.V[i, j] = v_old
+def _update_V_full(model, proposal_precision=1):
+    for i in np.random.permutation(model.params.K):
+        for j in np.random.permutation(model.params.K):
+            _update_V_element(i, j, model, proposal_precision)
 
-                log_p_old = model.joint_dist.log_p(data, params)
 
-                log_q_old = scipy.stats.norm.logpdf(v_old, v_new, proposal_std)
+def _update_V_element(i, j, model, proposal_precision):
+    proposal_std = 1 / np.sqrt(proposal_precision)
 
-                params.V[i, j] = v_new
+    v_old = model.params.V[i, j]
 
-                log_p_new = model.joint_dist.log_p(data, params)
+    log_p_old = model.log_p
 
-                log_q_new = scipy.stats.norm.logpdf(v_new, v_old, proposal_std)
+    v_new = scipy.stats.norm.rvs(v_old, proposal_std)
 
-                if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, log_q_new, log_q_old):
-                    params.V[i, j] = v_new
+    model.params.V[i, j] = v_new
 
-                else:
-                    params.V[i, j] = v_old
+    log_p_new = model.log_p
 
-    model.params = params
+    log_q_old = scipy.stats.norm.logpdf(v_old, v_new, proposal_std)
+
+    log_q_new = scipy.stats.norm.logpdf(v_new, v_old, proposal_std)
+
+    if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, log_q_new, log_q_old):
+        model.params.V[i, j] = v_new
+
+    else:
+        model.params.V[i, j] = v_old
+
+
+def _update_V_symmetric(model, proposal_precision=1):
+    for i in np.random.permutation(model.params.K):
+        for j in np.random.permutation(np.arange(i, model.params.K)):
+            _update_V_element_symmetric(i, j, model, proposal_precision)
+
+
+def _update_V_element_symmetric(i, j, model, proposal_precision):
+    proposal_std = 1 / np.sqrt(proposal_precision)
+
+    v_old = model.params.V[i, j]
+
+    log_p_old = model.log_p
+
+    v_new = scipy.stats.norm.rvs(v_old, proposal_std)
+
+    model.params.V[i, j] = v_new
+
+    model.params.V[j, i] = v_new
+
+    log_p_new = model.log_p
+
+    log_q_old = scipy.stats.norm.logpdf(v_old, v_new, proposal_std)
+
+    log_q_new = scipy.stats.norm.logpdf(v_new, v_old, proposal_std)
+
+    if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, log_q_new, log_q_old):
+        model.params.V[i, j] = v_new
+
+        model.params.V[j, i] = v_new
+
+    else:
+        model.params.V[i, j] = v_old
+
+        model.params.V[j, i] = v_old
 
 
 def update_tau(model):
@@ -211,19 +217,14 @@ def update_tau(model):
 #=========================================================================
 class DataDistribution(pgfa.models.base.AbstractDataDistribution):
     def log_p(self, data, params):
-        log_p = 0
-
-        for row_idx in range(params.N):
-            log_p += self.log_p_row(data, params, row_idx)
-
-        return log_p
-
-    def log_p_row(self, data, params, row_idx):
         if params.Z.shape[1] == 0:
             return -np.inf
 
         else:
-            return _log_p_row(params.V, data, params.Z.astype(np.float64), row_idx)
+            return _log_p(data, params.V, params.Z.astype(np.float64))
+
+    def log_p_row(self, data, params, row_idx):
+        return self.log_p(data, params)
 
 
 class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
@@ -233,7 +234,8 @@ class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
     def log_p(self, params):
         log_p = 0
 
-        # Prior
+        log_p += scipy.stats.gamma.logpdf(params.tau, params.tau_prior[0], scale=(1 / params.tau_prior[1]))
+
         if self.symmetric:
             log_p += np.sum(scipy.stats.norm.logpdf(
                 np.squeeze(params.V[np.triu_indices(params.K)]), 0, 1 / np.sqrt(params.tau)
@@ -248,51 +250,45 @@ class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
 
 
 @numba.njit(cache=True)
-def _log_p_row(V, X, Z, row_idx):
+def _log_p(X, V, Z):
     N = X.shape[0]
 
     log_p = 0
 
-    log_p += _get_log_p_sigmoid(row_idx, row_idx, X, V, Z)
-
     for i in range(N):
-        if i == row_idx:
-            continue
+        for j in range(N):
+            if np.isnan(X[i, j]):
+                continue
 
-        log_p += _get_log_p_sigmoid(i, row_idx, X, V, Z)
+            m = Z[i] @ V @ Z[j].T
 
-        log_p += _get_log_p_sigmoid(row_idx, i, X, V, Z)
+            log_p += log_sigmoid(X[i, j], m)
 
     return log_p
 
 
 @numba.njit(cache=True)
-def _get_log_p_sigmoid(i, j, X, V, Z):
-    if np.isnan(X[i, j]):
-        log_p = 0
+def log_sigmoid(x, m):
+    r = np.exp(-m)
+
+    if x == 0:
+        return -m - np.log1p(r)
 
     else:
-        m = Z[i].T @ V @ Z[j]
-
-        f = np.exp(-m)
-
-        if X[i, j] == 0:
-            log_p = -m - np.log1p(f)
-
-        else:
-            log_p = -np.log1p(f)
-
-    return log_p
-
+        return -np.log1p(r)
 
 #=========================================================================
 # Singletons updaters
 #=========================================================================
+
+
 class PriorSingletonsUpdater(object):
     def update_row(self, model, row_idx):
-        k_old = len(get_singleton_idxs(model.params.Z, row_idx))
+        singleton_idxs = get_singleton_idxs(model.params.Z, row_idx)
 
-        k_new = np.random.poisson(model.params.alpha / model.params.N)
+        k_old = len(singleton_idxs)
+
+        k_new = scipy.stats.poisson.rvs(model.params.alpha / model.params.N)
 
         if (k_new == 0) and (k_old == 0):
             return model.params
@@ -311,21 +307,37 @@ class PriorSingletonsUpdater(object):
 
         V_new = np.zeros((K_new, K_new))
 
+        # Copy over old values
         for i in range(num_non_singletons):
             for j in range(num_non_singletons):
                 V_new[i, j] = model.params.V[non_singleton_idxs[i], non_singleton_idxs[j]]
 
+        # Propose new values for V
+        std = 1 / np.sqrt(model.params.tau)
+
         if model.symmetric:
             for i in range(num_non_singletons, K_new):
-                for j in range(i, K_new):
-                    V_new[i, j] = np.random.normal(0, 1 / np.sqrt(model.params.tau))
+                V_new[i, i] = scipy.stats.norm.rvs(0, std)
+
+                for j in range(num_non_singletons):
+                    V_new[i, j] = scipy.stats.norm.rvs(0, std)
 
                     V_new[j, i] = V_new[i, j]
 
+            assert np.all(V_new.T == V_new)
+
         else:
             for i in range(num_non_singletons, K_new):
-                for j in range(num_non_singletons, K_new):
-                    V_new[j, i] = np.random.normal(0, 1 / np.sqrt(model.params.tau))
+                for j in range(K_new):
+                    V_new[i, j] = scipy.stats.norm.rvs(0, std)
+
+                    if i != j:
+                        V_new[j, i] = scipy.stats.norm.rvs(0, std)
+
+        for i in range(num_non_singletons):
+            assert np.all(
+                V_new[i, :num_non_singletons] == model.params.V[non_singleton_idxs[i]][non_singleton_idxs]
+            )
 
         params_new = model.params.copy()
 
@@ -333,9 +345,9 @@ class PriorSingletonsUpdater(object):
 
         params_new.Z = Z_new
 
-        log_p_new = model.data_dist.log_p_row(model.data, params_new, row_idx)
+        log_p_new = model.data_dist.log_p(model.data, params_new)
 
-        log_p_old = model.data_dist.log_p_row(model.data, model.params, row_idx)
+        log_p_old = model.data_dist.log_p(model.data, model.params)
 
         if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, 0, 0):
             model.params = params_new
