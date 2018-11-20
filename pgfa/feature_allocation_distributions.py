@@ -182,7 +182,7 @@ class IndianBuffetProcessDistribution(object):
 
 
 def update_alpha(model):
-    """ Metropolis-Hastings update of the Beta-Bernoulli or IBP concentration parameter.
+    """ Metropolis-Hastings update of the Beta-Bernoulli or IBP concentration parameter from a Gamma(1, 1) prior.
 
     Note: The model parameters will be updated in place.
 
@@ -203,11 +203,7 @@ def update_alpha(model):
 
     log_p_new = model.feat_alloc_dist.log_p(model.params)
 
-    log_q_old = scipy.stats.gamma.logpdf(alpha_old, a, scale=(1 / b))
-
-    log_q_new = scipy.stats.gamma.logpdf(alpha_new, a, scale=(1 / b))
-
-    if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, log_q_new, log_q_old):
+    if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, 0, 0):
         model.params.alpha = alpha_new
 
     else:
