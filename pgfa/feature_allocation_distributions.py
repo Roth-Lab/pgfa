@@ -178,6 +178,9 @@ class IndianBuffetProcessDistribution(object):
 
                 Z[n, K:] = 1
 
+        if Z.shape[1] == 0:
+            Z = np.zeros((N, 1))
+
         return Z.astype(np.int64)
 
 
