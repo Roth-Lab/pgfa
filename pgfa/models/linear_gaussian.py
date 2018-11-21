@@ -22,36 +22,19 @@ class Model(pgfa.models.base.AbstractModel):
 
         return Parameters(1, np.ones(2), 1, np.ones(2), 1, np.ones(2), V, Z)
 
-    def __init__(self, data, feat_alloc_dist, collapsed=False, params=None):
-        self.collapsed = collapsed
-
-        super().__init__(data, feat_alloc_dist, params=params)
-
     def _init_joint_dist(self, feat_alloc_dist):
-        if self.collapsed:
-            self.joint_dist = pgfa.models.base.JointDistribution(
-                CollapsedDataDistribution(), feat_alloc_dist, CollapsedParametersDistribution()
-            )
-
-        else:
-            self.joint_dist = pgfa.models.base.JointDistribution(
-                UncollapsedDataDistribution(), feat_alloc_dist, UncollapsedParametersDistribution()
-            )
+        self.joint_dist = pgfa.models.base.JointDistribution(
+            DataDistribution(), feat_alloc_dist, ParametersDistribution()
+        )
 
 
 class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
-    def __init__(self, feat_alloc_updater, update_hyper_params=True):
-        self.update_hyper_params = update_hyper_params
-
-        super().__init__(feat_alloc_updater)
-
     def _update_model_params(self, model):
         update_V(model)
 
-        if self.update_hyper_params:
-            update_tau_v(model)
+        update_tau_v(model)
 
-            update_tau_x(model)
+        update_tau_x(model)
 
 
 class Parameters(pgfa.models.base.AbstractParameters):
@@ -177,74 +160,7 @@ def update_tau_x(model):
 #=========================================================================
 # Densities and proposals
 #=========================================================================
-class CollapsedDataDistribution(pgfa.models.base.AbstractDataDistribution):
-    def log_p(self, data, params):
-        return self.log_p_row(data, params, None)
-
-    def log_p_row(self, data, params, row_idx):
-        t_v = params.tau_v
-        t_x = params.tau_x
-        Z = params.Z.astype(np.float64)
-        X = data
-
-        D = params.D
-        K = params.K
-        N = params.N
-
-        log_p = 0
-
-        log_p += 0.5 * K * D * t_v
-
-        log_p -= 0.5 * N * D * np.log(2 * np.pi)
-
-        for d in range(D):
-            idxs = ~np.isnan(X[:, d])
-
-            N_tmp = np.sum(idxs)
-
-            X_tmp = X[idxs, d]
-
-            Z_tmp = Z[idxs]
-
-            M = scipy.linalg.inv(Z_tmp.T @ Z_tmp + (t_v / t_x) * np.eye(K))
-
-            log_p -= 0.5 * N_tmp * np.log(2 * np.pi)
-
-            log_p += 0.5 * (N_tmp - K) * t_x
-
-            log_p += 0.5 * np.log(scipy.linalg.det(M))
-
-            log_p -= 0.5 * t_x * X_tmp.T @ (np.eye(N_tmp) - Z_tmp @ M @ Z_tmp.T) @ X_tmp
-
-        return log_p
-
-
-class CollapsedParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
-    def log_p(self, params):
-        t_v = params.tau_v
-        t_x = params.tau_x
-
-        log_p = 0
-
-        # Gamma prior on $\alpha$
-        a = params.alpha_prior[0]
-        b = params.alpha_prior[1]
-        log_p += scipy.stats.gamma.logpdf(t_v, a, scale=(1 / b))
-
-        # Gamma prior on $\tau_{a}$
-        a = params.tau_v_prior[0]
-        b = params.tau_v_prior[1]
-        log_p += scipy.stats.gamma.logpdf(t_v, a, scale=(1 / b))
-
-        # Gamma prior on $\tau_{x}$
-        a = params.tau_x_prior[0]
-        b = params.tau_x_prior[1]
-        log_p += scipy.stats.gamma.logpdf(t_x, a, scale=(1 / b))
-
-        return log_p
-
-
-class UncollapsedDataDistribution(pgfa.models.base.AbstractDataDistribution):
+class DataDistribution(pgfa.models.base.AbstractDataDistribution):
     def __init__(self):
         pass
 
@@ -269,7 +185,7 @@ class UncollapsedDataDistribution(pgfa.models.base.AbstractDataDistribution):
         return _log_p_row(params.tau_x, data[row_idx], params.Z[row_idx].astype(float), params.V)
 
 
-class UncollapsedParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
+class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
     def log_p(self, params):
         alpha = params.alpha
         t_v = params.tau_v
@@ -394,133 +310,3 @@ class PriorSingletonsUpdater(object):
         m = self._get_column_counts(Z, row_idx)
 
         return np.atleast_1d(np.squeeze(np.where(m == 0)))
-
-
-class CollapsedSingletonsUpdater(object):
-    def update_row(self, model, row_idx):
-        alpha = model.params.alpha
-        t_v = model.params.tau_v
-        t_x = model.params.tau_x
-        V = model.params.V
-        Z = model.params.Z
-        X = model.data
-
-        D = model.params.D
-        N = model.params.N
-
-        m = np.sum(Z, axis=0)
-
-        m -= Z[row_idx]
-
-        k_old = np.sum(m == 0)
-
-        k_new = np.random.poisson(alpha / N)
-
-        if k_new == k_old:
-            return model.params
-
-        non_singletons_idxs = np.atleast_1d(np.squeeze(np.where(m > 0)))
-
-        xmo = np.square(X[row_idx] - Z[row_idx, non_singletons_idxs] @ V[non_singletons_idxs])
-
-        log_p_old = 0
-        log_p_new = 0
-
-        for d in range(D):
-            if np.isnan(xmo[d]):
-                continue
-
-            log_p_old -= 0.5 * np.log((1 / t_x) + k_old * (1 / t_v))
-            log_p_old -= 0.5 * np.sum(1 / ((1 / t_x) + k_old * (1 / t_v)) * xmo[d])
-
-            log_p_new -= 0.5 * np.log((1 / t_x) + k_new * (1 / t_v))
-            log_p_new -= 0.5 * np.sum(1 / ((1 / t_x) + k_new * (1 / t_v)) * xmo[d])
-
-        if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, 0, 0):
-            non_singletons_idxs = np.atleast_1d(np.squeeze(np.where(m > 0)))
-
-            num_non_singletons = len(non_singletons_idxs)
-
-            K = num_non_singletons + k_new
-
-            Z = np.zeros((N, K), dtype=np.int64)
-
-            Z[:, :num_non_singletons] = model.params.Z[:, non_singletons_idxs]
-
-            Z[row_idx, num_non_singletons:] = 1
-
-            V = np.zeros((K, D))
-
-            V[:num_non_singletons] = model.params.V[non_singletons_idxs]
-
-            if k_new > 0:
-                V[num_non_singletons:] = self._sample_new_V(k_new, model.data, model.params, row_idx)
-
-            model.params.Z = Z
-
-            model.params.V = V
-
-    def _sample_new_V(self, k, data, params, row_idx):
-        D = params.D
-        N = params.N
-        V = params.V
-        Z = params.Z
-        t_v = params.tau_v
-        t_x = params.tau_x
-        X = data
-
-        m = np.sum(Z)
-
-        m -= Z[row_idx]
-
-        non_singletons_idxs = np.atleast_1d(np.squeeze(np.where(m > 0)))
-
-        V_old = V[non_singletons_idxs]
-
-        Z_old = Z[:, non_singletons_idxs]
-
-        Z_new = np.zeros((N, k))
-
-        Z_new[row_idx] = 1
-
-        M = np.linalg.inv(Z_new.T @ Z_new + (t_v / t_x) * np.eye(k))
-
-        return scipy.stats.matrix_normal.rvs(
-            mean=M @ Z_new.T @ (X - Z_old @ V_old),
-            rowcov=(1 / t_x) * M,
-            colcov=np.eye(D)
-        )
-
-    def _get_log_p(self, k, data, params, row_idx):
-        D = params.D
-        N = params.N
-        V = params.V
-        Z = params.Z
-        t_v = params.tau_v
-        t_x = params.tau_x
-        X = data
-
-        m = np.sum(Z)
-
-        m -= Z[row_idx]
-
-        non_singletons_idxs = np.atleast_1d(np.squeeze(np.where(m > 0)))
-
-        V_old = V[non_singletons_idxs]
-
-        Z_old = Z[:, non_singletons_idxs]
-
-        Z_new = np.zeros((N, k))
-
-        Z_new[row_idx] = 1
-
-        M = np.linalg.inv(Z_new.T @ Z_new + (t_v / t_x) * np.eye(k))
-
-        temp = Z_new.T @ (X - Z_old @ V_old)
-
-        log_p = 0
-        log_p += 0.5 * k * D * (np.log(t_v) - np.log(t_x))
-        log_p += 0.5 * D * np.log(np.linalg.det(M))
-        log_p += 0.5 * t_x * np.trace(temp.T @ M @ temp)
-
-        return log_p
