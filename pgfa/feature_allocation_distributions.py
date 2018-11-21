@@ -2,7 +2,7 @@ import numba
 import numpy as np
 import scipy.stats
 
-from pgfa.math_utils import discrete_rvs, log_beta, log_factorial, do_metropolis_hastings_accept_reject
+from pgfa.math_utils import bernoulli_rvs, log_beta, log_factorial, do_metropolis_hastings_accept_reject
 
 
 def get_feature_allocation_distribution(K=None):
@@ -155,7 +155,9 @@ class IndianBuffetProcessDistribution(object):
 
         Z = np.ones((1, K), dtype=np.int64)
 
-        for n in range(1, N):
+        for idx in range(1, N):
+            n = idx + 1
+
             K = Z.shape[1]
 
             z = np.zeros(K)
@@ -163,20 +165,16 @@ class IndianBuffetProcessDistribution(object):
             m = np.sum(Z, axis=0)
 
             for k in range(K):
-                p = np.array([n - m[k], m[k]])
-
-                p = p / p.sum()
-
-                z[k] = discrete_rvs(p)
+                z[k] = bernoulli_rvs(m[k] / n)
 
             Z = np.row_stack([Z, z])
 
-            k_new = np.random.poisson(alpha / (n + 1))
+            k_new = np.random.poisson(alpha / n)
 
             if k_new > 0:
                 Z = np.column_stack([Z, np.zeros((Z.shape[0], k_new))])
 
-                Z[n, K:] = 1
+                Z[idx, K:] = 1
 
         if Z.shape[1] == 0:
             Z = np.zeros((N, 1))
