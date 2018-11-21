@@ -46,16 +46,27 @@ class Model(pgfa.models.base.AbstractModel):
 
         covariance = np.diag(1 / S) + W @ W.T
 
-        try:
-            log_p = np.sum(
-                scipy.stats.multivariate_normal.logpdf(data.T, mean, covariance, allow_singular=True)
+        log_p = 0
+
+        for d in range(self.params.D):
+            X_d = self.data[d]
+
+            X_d = X_d[~np.isnan(X_d)]
+
+            log_p += np.sum(
+                scipy.stats.norm.logpdf(X_d, mean[d], np.sqrt(covariance[d, d]))
             )
 
-        except np.linalg.LinAlgError as e:
-            print(W)
-            print(np.sum(self.params.Z, axis=0))
-            print((W @ W.T).shape)
-            raise e
+#         try:
+#             log_p = np.sum(
+#                 scipy.stats.multivariate_normal.logpdf(data.T, mean, covariance, allow_singular=True)
+#             )
+#
+#         except np.linalg.LinAlgError as e:
+#             print(W)
+#             print(np.sum(self.params.Z, axis=0))
+#             print((W @ W.T).shape)
+#             raise e
 
         return log_p
 
@@ -159,7 +170,7 @@ def update_F(model):
 
     S = np.diag(params.S)
     W = params.W
-    X = model.data
+    X = np.nan_to_num(model.data)
 
     A = np.eye(params.K) + W.T @ S @ W
 
@@ -185,7 +196,7 @@ def update_S(model):
 
     a = params.S_prior[0] + 0.5 * params.N
 
-    b = params.S_prior[1] + 0.5 * np.sum(np.square(R), axis=1)
+    b = params.S_prior[1] + 0.5 * np.nansum(np.square(R), axis=1)
 
     S = np.zeros(params.D)
 
@@ -205,30 +216,34 @@ def update_V(model):
     model.params = params
 
 
-@numba.njit(cache=True)
+# @numba.njit(cache=True)
 def _update_V(data, gamma, F, S, V, Z):
     X = data
 
     D = Z.shape[0]
     K = Z.shape[1]
 
-    FF = np.sum(np.square(F), axis=1)
-
     for d in range(D):
-        R = X[d] - (Z[d] * V[d]) @ F
+        idxs = ~np.isnan(X[d])
+
+        F_temp = F[:, idxs]
+
+        FF = np.sum(np.square(F_temp), axis=1)
+
+        R = X[d, idxs] - (Z[d] * V[d]) @ F_temp
 
         for k in range(K):
-            rk = R + Z[d, k] * V[d, k] * F[k]
+            rk = R + Z[d, k] * V[d, k] * F_temp[k]
 
             prec = gamma + Z[d, k] * S[d] * FF[k]
 
-            mean = Z[d, k] * (S[d] / prec) * (F[k] @ rk.T)
+            mean = Z[d, k] * (S[d] / prec) * (F_temp[k] @ rk.T)
 
             std = 1 / np.sqrt(prec)
 
             V[d, k] = np.random.normal(mean, std)
 
-            R = rk - Z[d, k] * V[d, k] * F[k]
+            R = rk - Z[d, k] * V[d, k] * F_temp[k]
 
     return V
 
@@ -249,9 +264,10 @@ class DataDistribution(pgfa.models.base.AbstractDataDistribution):
 
         log_p = 0
 
+        # TODO: N need to be replace by number non-nan entries
         log_p += 0.5 * N * (np.log(np.prod(S)) - D * np.log(2 * np.pi))
 
-        log_p -= 0.5 * np.sum(S[:, np.newaxis] * np.square(diff))
+        log_p -= 0.5 * np.nansum(S[:, np.newaxis] * np.square(diff))
 
         return log_p
 
@@ -274,9 +290,10 @@ def log_p_row(F, N, S, X, V, Z, row_idx):
 
     log_p = 0
 
+    # TODO: N need to be replace by number non-nan entries
     log_p += 0.5 * N * (np.log(S[row_idx]) - np.log(2 * np.pi))
 
-    log_p -= 0.5 * np.sum(S[row_idx] * np.square(diff))
+    log_p -= 0.5 * np.nansum(S[row_idx] * np.square(diff))
 
     return log_p
 
