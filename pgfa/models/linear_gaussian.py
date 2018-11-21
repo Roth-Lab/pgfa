@@ -18,7 +18,11 @@ class Model(pgfa.models.base.AbstractModel):
 
         K = Z.shape[1]
 
-        V = np.random.multivariate_normal(np.zeros(D), np.eye(D), size=K)
+        V = scipy.stats.matrix_normal.rvs(
+            mean=np.zeros((K, D)),
+            rowcov=np.eye(K),
+            colcov=np.eye(D)
+        )
 
         return Parameters(1, np.ones(2), 1, np.ones(2), 1, np.ones(2), V, Z)
 
@@ -248,14 +252,14 @@ def _log_p_row(t_x, x, z, V):
 class PriorSingletonsUpdater(object):
     def update_row(self, model, row_idx):
         alpha = model.params.alpha
-        t_v = model.params.tau_v
+        tau_v = model.params.tau_v
 
         D = model.params.D
         N = model.params.N
 
         k_old = len(self._get_singleton_idxs(model.params.Z, row_idx))
 
-        k_new = np.random.poisson(alpha / N)
+        k_new = scipy.stats.poisson.rvs(alpha / N)
 
         if (k_new == 0) and (k_old == 0):
             return model.params
@@ -274,11 +278,14 @@ class PriorSingletonsUpdater(object):
 
         params_new.V[:num_non_singletons] = model.params.V[non_singleton_idxs]
 
-        params_new.V[num_non_singletons:] = np.random.multivariate_normal(
-            np.zeros(D), (1 / t_v) * np.eye(D), size=k_new
-        )
+        if k_new > 0:
+            params_new.V[num_non_singletons:] = scipy.stats.matrix_normal.rvs(
+                mean=np.zeros((k_new, D)),
+                rowcov=(1 / tau_v) * np.eye(k_new),
+                colcov=np.eye(D)
+            )
 
-        params_new.Z = np.zeros((N, K_new))
+        params_new.Z = np.zeros((N, K_new), dtype=np.int8)
 
         params_new.Z[:, :num_non_singletons] = model.params.Z[:, non_singleton_idxs]
 
