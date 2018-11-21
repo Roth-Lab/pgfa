@@ -1,5 +1,6 @@
 import numba
 import numpy as np
+import scipy.stats
 
 from pgfa.math_utils import bernoulli_rvs
 from pgfa.utils import get_b_cubed_score
@@ -14,28 +15,38 @@ def main():
     np.random.seed(seed)
     set_numba_seed(seed)
 
-    K = 4
-    N = 100
+    ibp = True
+    pg = False
+    num_iters = int(1e5)
+
+    K = 5
+    N = 20
 
     feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K)
 
-    data, data_true, params = simulate_data(feat_alloc_dist, N, alpha=2, tau=0.25)
+    data, data_true, params = simulate_data(feat_alloc_dist, N, alpha=K, tau=0.1)
 
-    singletons_updater = None
+    if ibp:
+        singletons_updater = pgfa.models.lfrm.PriorSingletonsUpdater()
 
-#     singletons_updater = pgfa.models.lfrm.PriorSingletonsUpdater()
+        feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(None)
 
-    feat_alloc_updater = pgfa.updates.ParticleGibbsUpdater(
-        annealed=True, singletons_updater=singletons_updater
-    )
+    else:
+        singletons_updater = None
 
-    feat_alloc_updater = pgfa.updates.GibbsMixtureUpdater(feat_alloc_updater)
+        feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K)
 
-    feat_alloc_updater = pgfa.updates.GibbsUpdater(singletons_updater=singletons_updater)
+    if pg:
+        feat_alloc_updater = pgfa.updates.ParticleGibbsUpdater(
+            annealed=True, singletons_updater=singletons_updater
+        )
+
+        feat_alloc_updater = pgfa.updates.GibbsMixtureUpdater(feat_alloc_updater)
+
+    else:
+        feat_alloc_updater = pgfa.updates.GibbsUpdater(singletons_updater=singletons_updater)
 
     model_updater = pgfa.models.lfrm.ModelUpdater(feat_alloc_updater)
-
-    feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K)
 
     model = pgfa.models.lfrm.Model(data, feat_alloc_dist, symmetric=False)
 
@@ -47,11 +58,13 @@ def main():
 
     model.params = old_params.copy()
 
+#     model.params = params.copy()
+
     print(np.sum(params.Z, axis=0))
 
     print('@' * 100)
 
-    for i in range(10000):
+    for i in range(num_iters):
         if i % 10 == 0:
             print(
                 i,
@@ -68,9 +81,17 @@ def main():
 
             print(np.sum(model.params.Z, axis=0))
 
+#             print('x' * 100)
+#
+#             print(
+#                 model.data_dist.log_p(model.data, model.params),
+#                 model.feat_alloc_dist.log_p(model.params),
+#                 model.params_dist.log_p(model.params)
+#             )
+
             print('#' * 100)
 
-        model_updater.update(model)
+        model_updater.update(model, alpha_updates=1, param_updates=1)
 
 
 def simulate_data(feat_alloc_dist, N, alpha=1, tau=0.1):
@@ -79,8 +100,8 @@ def simulate_data(feat_alloc_dist, N, alpha=1, tau=0.1):
     K = Z.shape[1]
 
     V = np.random.normal(0, 1 / np.sqrt(tau), size=(K, K))
-    V = np.triu(V)
-    V = V + V.T - np.diag(np.diag(V))
+#     V = np.triu(V)
+#     V = V + V.T - np.diag(np.diag(V))
 
     params = pgfa.models.lfrm.Parameters(alpha, np.ones(2), tau, np.ones(2), V, Z)
 
@@ -100,7 +121,7 @@ def simulate_data(feat_alloc_dist, N, alpha=1, tau=0.1):
 
     for i in range(N):
         for j in range(N):
-            if np.random.random() < 0.1:
+            if np.random.random() < -0.1:
                 data[i, j] = np.nan
 
     return data, data_true, params

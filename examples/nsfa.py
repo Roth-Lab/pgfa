@@ -10,15 +10,16 @@ import pgfa.updates
 def main():
     np.random.seed(0)
 
-    num_iters = 100001
-    D = 100
-    K = 5
-    N_train = 1000
-    N_test = 1000
+    ibp = True
+    num_iters = int(1e5)
+    D = 10
+    K = 20
+    N_train = 100
+    N_test = 100
 
     feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K)
 
-    params_train = get_test_params(feat_alloc_dist, N_train, D, alpha=4, gamma=0.25, S=25, seed=0)
+    params_train = get_test_params(feat_alloc_dist, N_train, D, alpha=K, gamma=0.25, S=25, seed=0)
 
     params_test = get_test_params(feat_alloc_dist, N_test, D, params=params_train, seed=1)
 
@@ -26,23 +27,25 @@ def main():
 
     data_test = get_data(params_test)
 
-#     singletons_updater = pgfa.models.nsfa.PriorSingletonsUpdater()
+    if ibp:
+        singletons_updater = pgfa.models.nsfa.PriorSingletonsUpdater()
 
-    singletons_updater = None
+        feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(None)
+
+    else:
+        singletons_updater = None
+
+        feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K)
 
     feat_alloc_updater = pgfa.updates.GibbsMixtureUpdater(
         pgfa.updates.ParticleGibbsUpdater(
-            annealed=True,  num_particles=10, singletons_updater=singletons_updater
+            annealed=True, num_particles=20, singletons_updater=singletons_updater
         )
     )
 
-#     feat_alloc_updater = pgfa.updates.RowGibbsUpdater()
-
-    feat_alloc_updater = pgfa.updates.GibbsUpdater(singletons_updater=singletons_updater)
+#     feat_alloc_updater = pgfa.updates.GibbsUpdater(singletons_updater=singletons_updater)
 
     model_updater = pgfa.models.nsfa.ModelUpdater(feat_alloc_updater)
-
-    feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K)
 
     model = pgfa.models.nsfa.Model(data_train, feat_alloc_dist)
 
@@ -50,33 +53,16 @@ def main():
 
     model.params = params_train.copy()
 
-#     idxs = np.sum(model.params.Z, axis=0) > 0
-# 
-#     model.params.Z = model.params.Z[:, idxs]
-# 
-#     model.params.V = model.params.V[:, idxs]
-# 
-#     model.params.F = model.params.F[idxs]
-
     log_p_true = model.log_p
 
     model.params = params_orig
-
-
-#     model.params = params_train.copy()
-#
-#     model.params.Z = np.random.randint(0, 2, size=model.params.Z.shape)
-#
-#     model.params.Z = np.zeros(model.params.Z.shape)
-#
-#     model.params.Z[:, 0] = 1
 
     print(np.sum(params_train.Z, axis=0))
 
     print('@' * 100)
 
     for i in range(num_iters):
-        if i % 10 == 0:
+        if i % 100 == 0:
             print(
                 i,
                 model.params.Z.shape[1],
@@ -169,14 +155,27 @@ def get_min_error(params_pred, params_true):
 
 if __name__ == '__main__':
     #     import line_profiler
-    #     import pgfa.updates.particle_gibbs
     #
-    #     profiler = line_profiler.LineProfiler(
-    #         pgfa.models.nsfa.NonparametricSparaseFactorAnalysisModelUpdater.update,
-    #         pgfa.updates.particle_gibbs.do_particle_gibbs_update,
-    #         pgfa.updates.particle_gibbs._propose_annealed,
-    #         pgfa.updates.particle_gibbs._log_target_pdf_annealed
-    #     )
+    #     fast = True
+    #
+    #     if fast:
+    #         import pgfa.updates.particle_gibbs_target_ratio
+    #
+    #         profiler = line_profiler.LineProfiler(
+    #             pgfa.models.nsfa.ModelUpdater.update,
+    #             pgfa.updates.particle_gibbs_target_ratio.do_particle_gibbs_update,
+    #             pgfa.updates.particle_gibbs_target_ratio._propose,
+    #         )
+    #
+    #     else:
+    #         import pgfa.updates.particle_gibbs
+    #
+    #         profiler = line_profiler.LineProfiler(
+    #             pgfa.models.nsfa.ModelUpdater.update,
+    #             pgfa.updates.particle_gibbs.do_particle_gibbs_update,
+    #             pgfa.updates.particle_gibbs._propose,
+    #             pgfa.updates.particle_gibbs._log_target_pdf_annealed
+    #         )
     #
     #     profiler.run("main()")
     #
