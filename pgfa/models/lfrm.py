@@ -234,7 +234,15 @@ class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
     def log_p(self, params):
         log_p = 0
 
-        log_p += scipy.stats.gamma.logpdf(params.tau, params.tau_prior[0], scale=(1 / params.tau_prior[1]))
+        # Gamma prior on $\alpha$
+        a = params.alpha_prior[0]
+        b = params.alpha_prior[1]
+        log_p += scipy.stats.gamma.logpdf(params.alpha, a, scale=(1 / b))
+
+        # Gamma prior on $\tau$
+        a = params.tau_prior[0]
+        b = params.tau_prior[1]
+        log_p += scipy.stats.gamma.logpdf(params.tau, a, scale=(1 / b))
 
         if self.symmetric:
             log_p += np.sum(scipy.stats.norm.logpdf(
