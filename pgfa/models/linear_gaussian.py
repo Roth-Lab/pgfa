@@ -165,9 +165,6 @@ def update_tau_x(model):
 # Densities and proposals
 #=========================================================================
 class DataDistribution(pgfa.models.base.AbstractDataDistribution):
-    def __init__(self):
-        pass
-
     def log_p(self, data, params):
         t_x = params.tau_x
 
