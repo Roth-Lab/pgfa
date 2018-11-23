@@ -31,11 +31,14 @@ class Model(pgfa.models.base.AbstractModel):
     def __init__(self, data, feat_alloc_dist, params=None, symmetric=True):
         self.symmetric = symmetric
 
+        if symmetric:
+            assert np.all((data == data.T)[~np.isnan(data)])
+
         super().__init__(data, feat_alloc_dist, params=params)
 
     def _init_joint_dist(self, feat_alloc_dist):
         self.joint_dist = pgfa.models.base.JointDistribution(
-            DataDistribution(),
+            DataDistribution(symmetric=self.symmetric),
             feat_alloc_dist,
             ParametersDistribution(symmetric=self.symmetric)
         )
@@ -216,15 +219,34 @@ def update_tau(model):
 # Densities and proposals
 #=========================================================================
 class DataDistribution(pgfa.models.base.AbstractDataDistribution):
+    def __init__(self, symmetric):
+        self.symmetric = symmetric
+
     def log_p(self, data, params):
         if params.Z.shape[1] == 0:
-            return -np.inf
+            log_p = -np.inf
 
         else:
-            return _log_p(data, params.V, params.Z.astype(np.float64))
+            if self.symmetric:
+                log_p = _log_p_symmetric(data, params.V, params.Z.astype(np.float64))
+
+            else:
+                log_p = _log_p(data, params.V, params.Z.astype(np.float64))
+
+        return log_p
 
     def log_p_row(self, data, params, row_idx):
-        return self.log_p(data, params)
+        if params.Z.shape[1] == 0:
+            log_p = -np.inf
+
+        else:
+            if self.symmetric:
+                log_p = _log_p_symmetric_row(data, params.V, params.Z.astype(np.float64), row_idx)
+
+            else:
+                log_p = _log_p_row(data, params.V, params.Z.astype(np.float64), row_idx)
+
+        return log_p
 
 
 class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
@@ -258,6 +280,24 @@ class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
 
 
 @numba.njit(cache=True)
+def _log_p_symmetric(X, V, Z):
+    N = X.shape[0]
+
+    log_p = 0
+
+    for i in range(N):
+        for j in range(i, N):
+            if np.isnan(X[i, j]):
+                continue
+
+            m = Z[i] @ V @ Z[j].T
+
+            log_p += log_sigmoid(X[i, j], m)
+
+    return log_p
+
+
+@numba.njit(cache=True)
 def _log_p(X, V, Z):
     N = X.shape[0]
 
@@ -271,6 +311,52 @@ def _log_p(X, V, Z):
             m = Z[i] @ V @ Z[j].T
 
             log_p += log_sigmoid(X[i, j], m)
+
+    return log_p
+
+
+@numba.njit(cache=True)
+def _log_p_symmetric_row(X, V, Z, row_idx):
+    N = X.shape[0]
+
+    ZV = Z[row_idx] @ V
+
+    log_p = 0
+
+    for i in range(N):
+        if np.isnan(X[row_idx, i]):
+            continue
+
+        m = ZV @ Z[i].T
+
+        log_p += log_sigmoid(X[row_idx, i], m)
+
+    return log_p
+
+
+@numba.njit(cache=True)
+def _log_p_row(X, V, Z, row_idx):
+    N = X.shape[0]
+
+    VZ = V @ Z[row_idx].T
+
+    ZV = Z[row_idx] @ V
+
+    log_p = 0
+
+    for i in range(N):
+        if not np.isnan(X[row_idx, i]):
+            m = ZV @ Z[i].T
+
+            log_p += log_sigmoid(X[row_idx, i], m)
+
+        if i == row_idx:
+            continue
+
+        if not np.isnan(X[i, row_idx]):
+            m = Z[i] @ VZ
+
+            log_p += log_sigmoid(X[i, row_idx], m)
 
     return log_p
 
