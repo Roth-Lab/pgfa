@@ -18,7 +18,7 @@ class Model(pgfa.models.base.AbstractModel):
 
         K = Z.shape[1]
 
-        F = np.random.normal(0, 1, size=(K, N))
+        F = scipy.stats.norm.rvs(0, 1, size=(K, N))
 
         S = np.ones(D)
 
@@ -26,7 +26,7 @@ class Model(pgfa.models.base.AbstractModel):
             V = np.zeros((D, K))
 
         else:
-            V = np.random.multivariate_normal(np.zeros(K), np.eye(K), size=D)
+            V = scipy.stats.multivariate_normal.rvs(np.zeros(K), np.eye(K), size=D)
 
         return Parameters(1, np.ones(2), 1, np.ones(2), F, S, np.ones(2), V, Z)
 
@@ -178,7 +178,7 @@ def update_F(model):
 
     b = scipy.linalg.cho_solve(A_chol, W.T @ S @ X)
 
-    eps = np.random.normal(0, 1, size=(params.K, params.N))
+    eps = scipy.stats.norm.rvs(0, 1, size=(params.K, params.N))
 
     params.F = b + scipy.linalg.solve_triangular(A_chol[0], eps, lower=A_chol[1])
 
@@ -241,7 +241,7 @@ def _update_V(data, gamma, F, S, V, Z):
 
             std = 1 / np.sqrt(prec)
 
-            V[d, k] = np.random.normal(mean, std)
+            V[d, k] = scipy.stats.norm.rvs(mean, std)
 
             R = rk - Z[d, k] * V[d, k] * F_temp[k]
 
@@ -373,15 +373,15 @@ class PriorSingletonsUpdater(object):
 
         params_new.F[:num_non_singletons] = model.params.F[non_singleton_idxs]
 
-        params_new.F[num_non_singletons:] = np.random.normal(0, 1, size=(k_new, N))
+        params_new.F[num_non_singletons:] = scipy.stats.norm.rvs(0, 1, size=(k_new, N))
 
         params_new.V = np.zeros((D, K_new))
 
         params_new.V[:, :num_non_singletons] = model.params.V[:, non_singleton_idxs]
 
-        params_new.V[:, num_non_singletons:] = np.random.multivariate_normal(
+        params_new.V[:, num_non_singletons:] = np.atleast_2d(scipy.stats.multivariate_normal.rvs(
             np.zeros(D), (1 / gamma) * np.eye(D), size=k_new
-        ).T
+        )).T
 
         params_new.Z = np.zeros((D, K_new), dtype=np.int64)
 
@@ -454,7 +454,7 @@ class CollapsedSingletonsUpdater(object):
             log_p_new = 0
 
         else:
-            v_new = np.atleast_2d(np.random.normal(0, 1 / np.sqrt(gamma), size=k_new))
+            v_new = np.atleast_2d(scipy.stats.norm.rvs(0, 1 / np.sqrt(gamma), size=k_new))
 
             prec_new = s * (v_new @ v_new.T) + np.eye(k_new)
 
@@ -480,7 +480,7 @@ class CollapsedSingletonsUpdater(object):
             if k_new > 0:
                 chol = np.linalg.cholesky(prec_new)
 
-                eps = np.random.normal(0, 1, size=(k_new, N))
+                eps = scipy.stats.norm.rvs(0, 1, size=(k_new, N))
 
                 F_new[num_non_singletons:] = mean_new * E + np.linalg.solve(chol, eps)
 
