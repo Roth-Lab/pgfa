@@ -36,39 +36,7 @@ class Model(pgfa.models.base.AbstractModel):
 
         X_pred = self.params.W @ self.params.F
 
-        return np.sqrt(np.mean((X_true - X_pred)**2))
-
-    def log_predictive_pdf(self, data):
-        S = self.params.S
-        W = self.params.W
-
-        mean = np.zeros(self.params.D)
-
-        covariance = np.diag(1 / S) + W @ W.T
-
-        log_p = 0
-
-        for d in range(self.params.D):
-            X_d = self.data[d]
-
-            X_d = X_d[~np.isnan(X_d)]
-
-            log_p += np.sum(
-                scipy.stats.norm.logpdf(X_d, mean[d], np.sqrt(covariance[d, d]))
-            )
-
-#         try:
-#             log_p = np.sum(
-#                 scipy.stats.multivariate_normal.logpdf(data.T, mean, covariance, allow_singular=True)
-#             )
-#
-#         except np.linalg.LinAlgError as e:
-#             print(W)
-#             print(np.sum(self.params.Z, axis=0))
-#             print((W @ W.T).shape)
-#             raise e
-
-        return log_p
+        return np.sqrt(np.mean((X_true - X_pred) ** 2))
 
     def _init_joint_dist(self, feat_alloc_dist):
         self.joint_dist = pgfa.models.base.JointDistribution(
@@ -516,3 +484,25 @@ def get_singletons_idxs(Z, row_idx):
     m -= Z[row_idx]
 
     return np.atleast_1d(np.squeeze(np.where(m == 0)))
+
+    
+def log_predictive_pdf(data, params):
+    S = params.S
+    W = params.W
+
+    mean = np.zeros(params.D)
+
+    covariance = np.diag(1 / S) + W @ W.T
+
+    log_p = 0
+
+    for d in range(params.D):
+        X_d = data[d]
+
+        X_d = X_d[~np.isnan(X_d)]
+
+        log_p += np.sum(
+            scipy.stats.norm.logpdf(X_d, mean[d], np.sqrt(covariance[d, d]))
+        )
+
+    return log_p
