@@ -8,7 +8,6 @@ import pgfa.feature_allocation_distributions
 import pgfa.models.linear_gaussian
 import pgfa.updates
 
-from pgfa.models.trace import TraceReader, TraceWriter
 from pgfa.utils import Timer
 
 
@@ -19,7 +18,6 @@ def main():
 
     set_seed(seed)
 
-    num_iters = 101
     time = 10000
     D = 10
     K = 4
@@ -34,7 +32,7 @@ def main():
         assert not np.all(np.isnan(data[n]))
 
     model_updater = get_model_updater(
-        collapsed_singletons=False, feat_alloc_updater_type='pga', ibp=(K is None), mixed_updates=True
+        feat_alloc_updater_type='pga', ibp=(K is None), mixed_updates=True
     )
 
     model = get_model(data, collapsed=False, K=K)
@@ -107,7 +105,7 @@ def main():
 
         timer.start()
 
-        model_updater.update(model, update_alpha=False, update_feat_alloc=True, update_params=False)
+        model_updater.update(model)
 
         timer.stop()
 
@@ -122,16 +120,12 @@ def set_seed(seed):
 def get_model(data, alpha=1, collapsed=False, K=None):
     feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K=K)
 
-    return pgfa.models.linear_gaussian.Model(data, feat_alloc_dist, collapsed=collapsed)
+    return pgfa.models.linear_gaussian.Model(data, feat_alloc_dist)
 
 
-def get_model_updater(collapsed_singletons=False, feat_alloc_updater_type='g', ibp=True, mixed_updates=False):
+def get_model_updater(feat_alloc_updater_type='g', ibp=True, mixed_updates=False):
     if ibp:
-        if collapsed_singletons:
-            singletons_updater = pgfa.models.linear_gaussian.CollapsedSingletonsUpdater()
-
-        else:
-            singletons_updater = pgfa.models.linear_gaussian.PriorSingletonsUpdater()
+        singletons_updater = pgfa.models.linear_gaussian.PriorSingletonsUpdater()
 
     else:
         singletons_updater = None
