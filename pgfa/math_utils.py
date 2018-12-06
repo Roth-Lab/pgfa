@@ -15,6 +15,7 @@ def discrete_rvs(p):
     return np.digitize(np.array(u), P).max()
 
 
+@numba.njit(cache=True)
 def do_metropolis_hastings_accept_reject(log_p_new, log_p_old, log_q_new, log_q_old):
     u = np.random.random()
 
