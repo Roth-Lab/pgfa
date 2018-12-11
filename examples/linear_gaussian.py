@@ -17,13 +17,14 @@ def main():
     np.random.seed(seed)
 
     set_seed(seed)
-
+    
+    ibp = False
     time = 10000
     D = 10
     K = 4
-    N = 10
+    N = 100
 
-    data, data_true, params = simulate_data(D, N, K=K, alpha=1 * K, prop_missing=0.1, tau_v=0.1, tau_x=10)
+    data, data_true, params = simulate_data(D, N, K=K, alpha=1 * K, prop_missing=0.1, tau_v=0.25, tau_x=25)
 
     for d in range(D):
         assert not np.all(np.isnan(data[:, d]))
@@ -32,14 +33,10 @@ def main():
         assert not np.all(np.isnan(data[n]))
 
     model_updater = get_model_updater(
-        feat_alloc_updater_type='pga', ibp=(K is None), mixed_updates=True
+        feat_alloc_updater_type='g', ibp=ibp, mixed_updates=True
     )
 
-    model = get_model(data, collapsed=False, K=K)
-
-    model.params = params.copy()
-
-    model.params.Z = model.feat_alloc_dist.rvs(model.params.alpha, N)
+    model = get_model(data, ibp=ibp, K=K)
 
     print(np.sum(params.Z, axis=0))
 
@@ -63,12 +60,15 @@ def main():
         if i % 10 == 0:
             print(
                 i,
-                model.log_p,
-                (model.log_p - true_log_p) / abs(true_log_p),
                 model.params.K,
                 model.params.alpha,
-                get_b_cubed_score(params.Z, model.params.Z)[0],
+                model.log_p,
+                (model.log_p - true_log_p) / abs(true_log_p),
                 compute_l2_error(data, data_true, model.params)
+            )
+            
+            print(
+                get_b_cubed_score(params.Z, model.params.Z)
             )
 
             print(
@@ -76,8 +76,6 @@ def main():
                 model.feat_alloc_dist.log_p(model.params),
                 model.params_dist.log_p(model.params)
             )
-
-            print(np.sum(np.abs(params.V - model.params.V)))
 
             print(model.params.tau_v, model.params.tau_x)
 
@@ -117,8 +115,12 @@ def set_seed(seed):
     np.random.seed(seed)
 
 
-def get_model(data, alpha=1, collapsed=False, K=None):
-    feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K=K)
+def get_model(data, ibp=False, K=None):
+    if ibp:
+        feat_alloc_dist = pgfa.feature_allocation_distributions.IndianBuffetProcessDistribution()
+    
+    else:
+        feat_alloc_dist = pgfa.feature_allocation_distributions.BetaBernoulliFeatureAllocationDistribution(K)
 
     return pgfa.models.linear_gaussian.Model(data, feat_alloc_dist)
 
