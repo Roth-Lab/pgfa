@@ -437,8 +437,6 @@ class CollapsedSingletonsUpdater(object):
             
             update_V(model)
 
-        return model.params
-
 
 def get_non_singletons_idxs(Z, row_idx):
     m = np.sum(Z, axis=0)
