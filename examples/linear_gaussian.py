@@ -12,19 +12,19 @@ from pgfa.utils import Timer
 
 
 def main():
-    seed = 0
+    seed = 1
 
     np.random.seed(seed)
 
     set_seed(seed)
     
-    ibp = False
+    ibp = True
     time = 10000
     D = 10
-    K = 4
+    K = None
     N = 100
 
-    data, data_true, params = simulate_data(D, N, K=K, alpha=1 * K, prop_missing=0.1, tau_v=0.25, tau_x=25)
+    data, data_true, params = simulate_data(D, N, K=K, alpha=2, prop_missing=0.01, tau_v=0.25, tau_x=25)
 
     for d in range(D):
         assert not np.all(np.isnan(data[:, d]))
@@ -33,7 +33,7 @@ def main():
         assert not np.all(np.isnan(data[n]))
 
     model_updater = get_model_updater(
-        feat_alloc_updater_type='g', ibp=ibp, mixed_updates=True
+        feat_alloc_updater_type='rg', ibp=ibp, mixed_updates=False
     )
 
     model = get_model(data, ibp=ibp, K=K)
@@ -55,6 +55,10 @@ def main():
     true_log_p = model.log_p
 
     model.params = old_params.copy()
+    
+    model.params.alpha = 1
+    
+    print(true_log_p)
 
     while timer.elapsed < time:
         if i % 10 == 0:
@@ -83,21 +87,21 @@ def main():
 
         trace.append(model.log_p)
 
-        if (trace[-1] - trace[-2]) < -50:
-            print('@' * 100)
-            print('DEBUG')
-            print(trace[-1], trace[-2])
-            print(model.params.V)
-            print(model.params.tau_v)
-            print(model.params.tau_x)
-            print(np.sum(model.params.Z, axis=0))
-            print(np.sum(model.params.Z, axis=1).min(), np.sum(model.params.Z, axis=1).max())
-            print(model.params.Z.T @ model.params.Z)
-            print('@' * 100)
-
-            model.params = old_params
-
-            model_updater.update(model, update_alpha=True, update_feat_alloc=True, update_params=True)
+#         if (trace[-1] - trace[-2]) < -50:
+#             print('@' * 100)
+#             print('DEBUG')
+#             print(trace[-1], trace[-2])
+#             print(model.params.V)
+#             print(model.params.tau_v)
+#             print(model.params.tau_x)
+#             print(np.sum(model.params.Z, axis=0))
+#             print(np.sum(model.params.Z, axis=1).min(), np.sum(model.params.Z, axis=1).max())
+#             print(model.params.Z.T @ model.params.Z)
+#             print('@' * 100)
+# 
+#             model.params = old_params
+# 
+#             model_updater.update(model, update_alpha=True, update_feat_alloc=True, update_params=True)
 
         old_params = model.params.copy()
 
@@ -137,12 +141,12 @@ def get_model_updater(feat_alloc_updater_type='g', ibp=True, mixed_updates=False
 
     elif feat_alloc_updater_type == 'pg':
         feat_alloc_updater = pgfa.updates.ParticleGibbsUpdater(
-            annealed=False, num_particles=10, singletons_updater=singletons_updater
+            annealed=False, num_particles=20, singletons_updater=singletons_updater
         )
 
     elif feat_alloc_updater_type == 'pga':
         feat_alloc_updater = pgfa.updates.ParticleGibbsUpdater(
-            annealed=True, num_particles=10, singletons_updater=singletons_updater
+            annealed=True, num_particles=20, singletons_updater=singletons_updater
         )
 
     elif feat_alloc_updater_type == 'rg':

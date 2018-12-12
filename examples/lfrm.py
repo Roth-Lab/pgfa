@@ -68,8 +68,8 @@ def main():
         if i % 10 == 0:
             print(
                 i,
-                model.params.alpha,
                 model.params.K,
+                model.params.alpha,
                 model.log_p,
                 (model.log_p - true_log_p) / abs(true_log_p),
                 np.sum(np.abs(model.predict(method='prob') - data_true)),
