@@ -121,33 +121,28 @@ class IndianBuffetProcessDistribution(object):
     def log_p(self, params):
         alpha = params.alpha
         Z = params.Z
-
+        
         Z = Z[:, np.sum(Z, axis=0) > 0]
-
-        K = Z.shape[1]
-
-        N = Z.shape[0]
+        
+        N, K = Z.shape
 
         if K == 0:
-            return 0
-
+            return 0        
+                
+        m = np.sum(Z, axis=0)
+        
         H = np.sum(1 / np.arange(1, N + 1))
 
-        histories, history_counts = np.unique(Z, axis=1, return_counts=True)
-
-        m = histories.sum(axis=0)
-
-        num_histories = histories.shape[1]
-
-        log_p = K * np.log(alpha) - H * alpha
-
-        for h in range(num_histories):
-            K_h = history_counts[h]
-
-            log_p += K_h * (log_factorial(m[h] - 1) + log_factorial(N - m[h]) - log_factorial(N))
-
-            log_p -= log_factorial(K_h)
-
+        log_p = 0
+        
+        log_p -= log_factorial(K)
+        
+        log_p += K * np.log(alpha)
+        
+        log_p -= H * alpha
+        
+        log_p += np.sum(log_factorial(m - 1) + log_factorial(N - m) - log_factorial(N))
+        
         return log_p
 
     def rvs(self, alpha, N):
