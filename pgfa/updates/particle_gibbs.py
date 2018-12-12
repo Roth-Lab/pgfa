@@ -9,6 +9,7 @@ from pgfa.updates.base import FeatureAllocationMatrixUpdater
 
 
 class ParticleGibbsUpdater(FeatureAllocationMatrixUpdater):
+
     def __init__(self, annealed=False, num_particles=10, resample_threshold=0.5, singletons_updater=None):
         self.annealed = annealed
 
@@ -161,6 +162,8 @@ def _propose(col, data, dist, feat_probs, params, parent_particle, row_idx, t, T
 
     if idx == -1:
         idx = prop_idx
+    
+    idx = int(idx)
 
     return Particle(log_p[idx], log_w, parent_particle, idx)
 
