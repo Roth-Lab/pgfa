@@ -8,6 +8,7 @@ import pgfa.models.base
 
 
 class Model(pgfa.models.base.AbstractModel):
+
     @staticmethod
     def get_default_params(data, feat_alloc_dist):
         N = data.shape[1]
@@ -30,9 +31,6 @@ class Model(pgfa.models.base.AbstractModel):
 
     def __init__(self, data, feat_alloc_dist, params=None, symmetric=True):
         self.symmetric = symmetric
-
-        if symmetric:
-            assert np.all((data == data.T)[~np.isnan(data)])
 
         super().__init__(data, feat_alloc_dist, params=params)
 
@@ -69,6 +67,7 @@ class Model(pgfa.models.base.AbstractModel):
 
 
 class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
+
     def _update_model_params(self, model):
         update_V(model)
 
@@ -76,6 +75,7 @@ class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
 
 
 class Parameters(pgfa.models.base.AbstractParameters):
+
     def __init__(self, alpha, alpha_prior, tau, tau_prior, V, Z):
         self.alpha = float(alpha)
 
@@ -219,6 +219,7 @@ def update_tau(model):
 # Densities and proposals
 #=========================================================================
 class DataDistribution(pgfa.models.base.AbstractDataDistribution):
+
     def __init__(self, symmetric):
         self.symmetric = symmetric
 
@@ -250,6 +251,7 @@ class DataDistribution(pgfa.models.base.AbstractDataDistribution):
 
 
 class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
+
     def __init__(self, symmetric=True):
         self.symmetric = symmetric
 
@@ -377,6 +379,7 @@ def log_sigmoid(x, m):
 
 
 class PriorSingletonsUpdater(object):
+
     def update_row(self, model, row_idx):
         singleton_idxs = get_singleton_idxs(model.params.Z, row_idx)
 
