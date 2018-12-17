@@ -4,6 +4,7 @@ import numpy as np
 
 
 class TraceReader(object):
+
     def __init__(self, file_name):
         self._fh = h5py.File(file_name, 'r')
 
@@ -25,12 +26,8 @@ class TraceReader(object):
     def __iter__(self):
         trace = {}
 
-        trace_shape = {}
-
         for name in self._fh.keys():
             trace[name] = self._fh[name].value
-
-            trace_shape[name] = self._get_trace_shape
 
         for idx in range(self.num_iters):
             K = trace['K'][idx]
@@ -43,7 +40,7 @@ class TraceReader(object):
                 if name in ['data', 'iter', 'D', 'K', 'N']:
                     continue
 
-                elif name == 'time':
+                elif name in ['log_p', 'time']:
                     row[name] = trace[name][idx]
 
                 else:
@@ -83,7 +80,7 @@ class TraceReader(object):
             if name in ['data', 'iter', 'D', 'K', 'N']:
                 continue
 
-            elif name == 'time':
+            elif name in ['log_p', 'time']:
                 row[name] = self._fh[name][idx]
 
             else:
@@ -106,6 +103,7 @@ class TraceReader(object):
 
 
 class TraceWriter(object):
+
     def __init__(self, file_name, model):
         self._fh = h5py.File(file_name, 'w')
 
@@ -122,6 +120,8 @@ class TraceWriter(object):
         self._fh.create_dataset('N', data=model.params.N)
 
         self._fh.create_dataset('K', (self._max_size,), dtype=np.int64, maxshape=(None,))
+
+        self._fh.create_dataset('log_p', (self._max_size,), dtype=np.float64, maxshape=(None,))
 
         self._fh.create_dataset('time', (self._max_size,), dtype=np.float64, maxshape=(None,))
 
@@ -170,6 +170,8 @@ class TraceWriter(object):
         self._resize_if_needed()
 
         self._fh['iter'][()] = self._iter
+        
+        self._fh['log_p'][self._iter] = model.log_p
 
         self._fh['time'][self._iter] = time
 
