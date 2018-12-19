@@ -227,8 +227,7 @@ def update_V(model):
 def _update_V(data, gamma, F, S, V, Z):
     X = data
    
-    D = Z.shape[0]
-    K = Z.shape[1]
+    D, K = Z.shape[0]
    
     FF = np.sum(np.square(F), axis=1)
     
