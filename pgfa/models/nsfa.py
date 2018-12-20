@@ -19,13 +19,12 @@ class Model(pgfa.models.base.AbstractModel):
         self.params = params
 
         self._init_joint_dist(feat_alloc_dist)
-        
+
         self.impute_data()
-        
+
     @staticmethod
     def get_default_params(data, feat_alloc_dist):
-        D = data.shape[0]
-        N = data.shape[1]
+        N, D = data.shape
 
         Z = feat_alloc_dist.rvs(1, D)
 
@@ -33,31 +32,26 @@ class Model(pgfa.models.base.AbstractModel):
 
         F = scipy.stats.norm.rvs(0, 1, size=(K, N))
 
-        S = 10 * np.ones(D)
+        tau_v = np.ones(K)
 
-        if K == 0:
-            V = np.zeros((D, K))
+        tau_x = np.ones(D)
 
-        else:
-            V = scipy.stats.multivariate_normal.rvs(np.zeros(K), np.eye(K), size=D)
+        V = np.zeros((D, K))
 
-        return Parameters(1, np.ones(2), np.ones(K), np.ones(2), F, S, np.array([10, 1]), V, Z)
+        if K > 0:
+            for k in range(K):
+                V[:, k] = scipy.stats.multivariate_normal.rvs(np.zeros(D), (1 / tau_v[k]) * np.eye(D))
 
-    @property
-    def rmse(self):
-        X_true = self.data
+        return Parameters(1, np.ones(2), tau_v, np.ones(2), tau_x, np.array([1, 1]), F, V, Z)
 
-        X_pred = self.params.W @ self.params.F
-
-        return np.sqrt(np.nanmean((X_true - X_pred) ** 2))
-    
     def impute_data(self):
         data = self._data.copy()
-        
+
         idxs = np.isnan(data)
-        
-        data[idxs] = (self.params.W @ self.params.F)[idxs]
-        
+
+        if np.any(idxs):
+            data[idxs] = self.params.Y[idxs]
+
         self.data = data
 
     def _init_joint_dist(self, feat_alloc_dist):
@@ -71,8 +65,8 @@ class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
     def update(self, model, alpha_updates=1, feat_alloc_updates=1, param_updates=1):
         """ Update all parameters in a feature allocation model.
         """
-        model.impute_data() 
-        
+        model.impute_data()
+
         for _ in range(feat_alloc_updates):
             self.feat_alloc_updater.update(model)
 
@@ -83,31 +77,31 @@ class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
             pgfa.feature_allocation_distributions.update_alpha(model)
 
     def _update_model_params(self, model):
-        update_V(model)
-
         update_F(model)
 
-        update_S(model)
+        update_V(model)
 
-        update_gamma(model)
+        update_tau_x(model)
+
+        update_tau_v(model)
 
 
 class Parameters(pgfa.models.base.AbstractParameters):
 
-    def __init__(self, alpha, alpha_prior, gamma, gamma_prior, F, S, S_prior, V, Z):
+    def __init__(self, alpha, alpha_prior, tau_v, tau_v_prior, tau_x, tau_x_prior, F, V, Z):
         self.alpha = alpha
 
         self.alpha_prior = alpha_prior
 
-        self.gamma = gamma
+        self.tau_v = tau_v
 
-        self.gamma_prior = gamma_prior
+        self.tau_v_prior = tau_v_prior
+
+        self.tau_x = tau_x
+
+        self.tau_x_prior = tau_x_prior
 
         self.F = F
-
-        self.S = S
-
-        self.S_prior = S_prior
 
         self.V = V
 
@@ -118,11 +112,11 @@ class Parameters(pgfa.models.base.AbstractParameters):
         return {
             'alpha': (),
             'alpha_prior': (2,),
-            'gamma': ('K',),
-            'gamma_prior': (2,),
+            'tau_v': ('K',),
+            'tau_v_prior': (2,),
+            'tau_x': ('D',),
+            'tau_x_prior': (2,),
             'F': ('K', 'N'),
-            'S': ('D',),
-            'S_prior': (2,),
             'V': ('D', 'K'),
             'Z': ('D', 'K')
         }
@@ -139,15 +133,19 @@ class Parameters(pgfa.models.base.AbstractParameters):
     def W(self):
         return self.Z * self.V
 
+    @property
+    def Y(self):
+        return (self.W @ self.F).T
+
     def copy(self):
         return Parameters(
             self.alpha,
             self.alpha_prior.copy(),
-            self.gamma,
-            self.gamma_prior.copy(),
+            self.tau_v,
+            self.tau_v_prior.copy(),
+            self.tau_x.copy(),
+            self.tau_x_prior.copy(),
             self.F.copy(),
-            self.S.copy(),
-            self.S_prior.copy(),
             self.V.copy(),
             self.Z.copy()
         )
@@ -156,97 +154,95 @@ class Parameters(pgfa.models.base.AbstractParameters):
 #=========================================================================
 # Updates
 #=========================================================================
-def update_gamma(model):
+def update_tau_v(model):
     params = model.params
-     
+
     for k in range(params.K):
-        a = params.gamma_prior[0] + 0.5 * np.sum(params.Z[:, k])
-      
-        b = params.gamma_prior[1] + 0.5 * np.sum(np.square(params.W[:, k]))
-      
-        params.gamma[k] = scipy.stats.gamma.rvs(a, scale=(1 / b))
-      
+        a = params.tau_v_prior[0] + 0.5 * np.sum(params.Z[:, k])
+
+        b = params.tau_v_prior[1] + 0.5 * np.sum(np.square(params.W[:, k]))
+
+        params.tau_v[k] = scipy.stats.gamma.rvs(a, scale=(1 / b))
+
     model.params = params
 
 
 def update_F(model):
     params = model.params
- 
+
     if params.K == 0:
         return
- 
-    S = np.diag(params.S)
+
+    tau_x = np.diag(params.tau_x)
     W = params.W
     X = model.data
- 
-    A = np.eye(params.K) + W.T @ S @ W
- 
+
+    A = np.eye(params.K) + W.T @ tau_x @ W
+
     A_chol = scipy.linalg.cho_factor(A)
- 
-    b = scipy.linalg.cho_solve(A_chol, W.T @ S @ X)
- 
+
+    b = scipy.linalg.cho_solve(A_chol, W.T @ tau_x @ X.T)
+
     eps = scipy.stats.norm.rvs(0, 1, size=(params.K, params.N))
- 
+
     params.F = b + scipy.linalg.solve_triangular(A_chol[0], eps, lower=A_chol[1])
- 
+
     model.params = params
 
 
-def update_S(model):
+def update_tau_x(model):
     params = model.params
-  
-    F = params.F
-    W = params.W
+
     X = model.data
-  
-    R = X - W @ F
-  
-    a = params.S_prior[0] + 0.5 * params.N
-  
-    b = params.S_prior[1] + 0.5 * np.nansum(np.square(R), axis=1)
-  
-    S = np.zeros(params.D)
-  
+
+    R = X - model.params.Y
+
+    a = params.tau_x_prior[0] + 0.5 * params.N
+
+    b = params.tau_x_prior[1] + 0.5 * np.nansum(np.square(R), axis=1)
+
+    tau_x = np.zeros(params.D)
+
     for d in range(params.D):
-        S[d] = scipy.stats.gamma.rvs(a, scale=(1 / b[d]))
-  
-    params.S = S
-  
+        tau_x[d] = scipy.stats.gamma.rvs(a, scale=(1 / b[d]))
+
+    params.tau_x = tau_x
+
     model.params = params
 
- 
+
 def update_V(model):
     params = model.params
-   
-    params.V = _update_V(model.data, params.gamma, params.F, params.S, params.V, params.Z)
-   
+
+    params.V = _update_V(model.data, params.tau_v, params.tau_x, params.F, params.V, params.Z)
+
     model.params = params
-   
-   
+
+
 @numba.njit(cache=True)
-def _update_V(data, gamma, F, S, V, Z):
+def _update_V(data, tau_v, tau_x, F, V, Z):
     X = data
-   
-    D, K = Z.shape[0]
-   
+
+    D, K = Z.shape
+
     FF = np.sum(np.square(F), axis=1)
-    
+
     for d in np.random.permutation(D):
-        R = X[d] - (Z[d] * V[d]) @ F
-   
+        R = X[:, d] - (Z[d] * V[d]) @ F
+
         for k in np.random.permutation(K):
             rk = R + Z[d, k] * V[d, k] * F[k]
-   
-            prec = gamma[k] + Z[d, k] * S[d] * FF[k]
-   
-            mean = Z[d, k] * (S[d] / prec) * (F[k] @ rk.T)
-   
+
+            prec = tau_v[k] + Z[d, k] * tau_x[d] * FF[k]
+
+            mean = Z[d, k] * (tau_x[d] / prec) * (F[k] @ rk.T)
+
             std = 1 / np.sqrt(prec)
-   
+
             V[d, k] = np.random.normal(mean, std)
-   
+
             R = rk - Z[d, k] * V[d, k] * F[k]
-     
+
     return V
 
 
@@ -256,41 +252,41 @@ def _update_V(data, gamma, F, S, V, Z):
 class DataDistribution(pgfa.models.base.AbstractDataDistribution):
 
     def log_p(self, data, params):
+        tau_x = params.tau_x
         F = params.F
-        S = params.S
         W = params.W
         X = data
-        
+
         D = params.D
         N = params.N
-        
-        return 0.5 * N * (np.sum(np.log(S)) - D * np.log(2 * np.pi)) - 0.5 * np.sum(S[:, np.newaxis] * np.square(X - (W @ F)))
-        
+
+        return 0.5 * N * (np.sum(np.log(tau_x)) - D * np.log(2 * np.pi)) - 0.5 * np.sum(tau_x[:, np.newaxis] * np.square(X.T - (W @ F)))
+
     def log_p_row(self, data, params, row_idx):
+        tau_x = params.tau_x
         F = params.F
-        S = params.S
         V = params.V
         Z = params.Z
         X = data
-        
+
         N = params.N
-        
-        s = S[row_idx]
-        
+
+        t_x = tau_x[row_idx]
+
         w = Z[row_idx] * V[row_idx]
-        
-        x = X[row_idx]
-        
-        return 0.5 * N * (np.log(s) - np.log(2 * np.pi)) - 0.5 * s * np.sum(np.square(x - w @ F))
+
+        x = X[:, row_idx]
+
+        return 0.5 * N * (np.log(t_x) - np.log(2 * np.pi)) - 0.5 * t_x * np.sum(np.square(x - w @ F))
 
 
 class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
 
     def log_p(self, params):
         alpha = params.alpha
-        gamma = params.gamma
+        tau_v = params.tau_v
+        tau_x = params.tau_x
         F = params.F
-        S = params.S
         V = params.V
 
         log_p = 0
@@ -302,7 +298,9 @@ class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
 
         # Common factors prior
         for k in range(params.K):
-            log_p += scipy.stats.multivariate_normal.logpdf(V[:, k], np.zeros(params.D), (1 / gamma[k]) * np.eye(params.D))
+            log_p += scipy.stats.multivariate_normal.logpdf(
+                V[:, k], np.zeros(params.D), (1 / tau_v[k]) * np.eye(params.D)
+            )
 
         if params.K > 0:
             # Factor loadings prior
@@ -311,35 +309,36 @@ class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
             )
 
         # Noise covariance
-        a = params.S_prior[0]
-        b = params.S_prior[1]
+        a = params.tau_x_prior[0]
+        b = params.tau_x_prior[1]
         log_p += np.sum(
-            scipy.stats.gamma.logpdf(S, a, scale=(1 / b))
+            scipy.stats.gamma.logpdf(tau_x, a, scale=(1 / b))
         )
-        
-        # 
-        a = params.gamma_prior[0]
-        b = params.gamma_prior[1]
-        log_p += np.sum(scipy.stats.gamma.logpdf(gamma, a, scale=(1 / b))) 
+
+        #
+        a = params.tau_v_prior[0]
+        b = params.tau_v_prior[1]
+        log_p += np.sum(scipy.stats.gamma.logpdf(tau_v, a, scale=(1 / b)))
 
         return log_p
 
 
 #=========================================================================
-# Singletons updaters
+# tau_xingletons updaters
 #=========================================================================
 class CollapsedSingletonsUpdater(object):
 
     def update_row(self, model, row_idx):
-        D = model.params.D
-        N = model.params.N
         alpha = model.params.alpha
-        gamma_prior = model.params.gamma_prior
+        tau_v_prior = model.params.tau_v_prior
+        tau_x = model.params.tau_x
         F = model.params.F
-        S = model.params.S
         V = model.params.V
         Z = model.params.Z
         X = model.data
+
+        D = model.params.D
+        N = model.params.N
 
         singleton_idxs = get_singletons_idxs(Z, row_idx)
 
@@ -354,13 +353,13 @@ class CollapsedSingletonsUpdater(object):
 
         f = F[non_singleton_idxs]
 
-        s = S[row_idx]
+        s = tau_x[row_idx]
 
         v = V[row_idx, non_singleton_idxs]
 
         z = Z[row_idx, non_singleton_idxs]
 
-        x = X[row_idx]
+        x = X[:, row_idx]
 
         E = x - (v * z) @ f
 
@@ -375,7 +374,7 @@ class CollapsedSingletonsUpdater(object):
             M_old = s * np.linalg.solve(prec_old, v_old)
             M_old = M_old[:, np.newaxis] @ E[np.newaxis, :]
 
-            log_p_old = 0 
+            log_p_old = 0
             log_p_old -= 0.5 * N * np.log(np.linalg.det(prec_old))
             log_p_old += 0.5 * np.trace(M_old.T @ prec_old @ M_old)
 
@@ -383,9 +382,9 @@ class CollapsedSingletonsUpdater(object):
             log_p_new = 0
 
         else:
-            gamma_new = scipy.stats.gamma.rvs(gamma_prior[0], scale=(1 / gamma_prior[1]), size=k_new)
-            
-            v_new = scipy.stats.norm.rvs(0, 1, size=k_new) * (1 / np.sqrt(gamma_new))
+            tau_v_new = scipy.stats.gamma.rvs(tau_v_prior[0], scale=(1 / tau_v_prior[1]), size=k_new)
+
+            v_new = scipy.stats.norm.rvs(0, 1, size=k_new) * (1 / np.sqrt(tau_v_new))
 
             prec_new = s * (v_new @ v_new.T) + np.eye(k_new)
 
@@ -398,14 +397,14 @@ class CollapsedSingletonsUpdater(object):
 
         if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, 0, 0):
             params = model.params.copy()
-            
+
             num_non_singletons = len(non_singleton_idxs)
 
             K_new = num_non_singletons + k_new
-            
-            params.gamma = np.zeros(K_new)
-            
-            params.gamma[:num_non_singletons] = model.params.gamma[non_singleton_idxs]
+
+            params.tau_v = np.zeros(K_new)
+
+            params.tau_v[:num_non_singletons] = model.params.tau_v[non_singleton_idxs]
 
             params.F = np.zeros((K_new, N))
 
@@ -419,8 +418,8 @@ class CollapsedSingletonsUpdater(object):
                 chol = np.linalg.cholesky(prec_new)
 
                 eps = scipy.stats.norm.rvs(0, 1, size=(k_new, N))
-            
-                params.gamma[num_non_singletons:] = gamma_new
+
+                params.tau_v[num_non_singletons:] = tau_v_new
 
                 params.F[num_non_singletons:] = M_new + np.linalg.solve(chol, eps)
 
@@ -433,7 +432,7 @@ class CollapsedSingletonsUpdater(object):
             params.Z[row_idx, num_non_singletons:] = 1
 
             model.params = params
-            
+
             update_V(model)
 
 
@@ -454,32 +453,35 @@ def get_singletons_idxs(Z, row_idx):
 
 
 def log_held_out_pdf(data, idxs, params):
-    X_pred = params.W @ params.F
-    
+    if not np.any(idxs):
+        return 0
+
+    X_pred = params.Y
+
     log_p = 0
-    
+
     for d in range(params.D):
-        X_obs_d = data[d, idxs[d]]
-        
-        X_pred_d = X_pred[d, idxs[d]]
-        
+        X_obs_d = data[idxs[d], d]
+
+        X_pred_d = X_pred[idxs[d], d]
+
         dmv = np.sum(idxs[d])
-        
+
         if dmv == 0:
             continue
-        
-        log_p += scipy.stats.multivariate_normal.logpdf(X_obs_d, X_pred_d, (1 / params.S[d]) * np.eye(dmv))
-    
+
+        log_p += scipy.stats.multivariate_normal.logpdf(X_obs_d, X_pred_d, (1 / params.tau_x[d]) * np.eye(dmv))
+
     return log_p
-        
-    
+
+
 def log_predictive_pdf(data, params):
-    S = params.S
+    tau_x = params.tau_x
     W = params.W
 
     mean = np.zeros(params.D)
 
-    covariance = np.diag(1 / S) + W @ W.T
+    covariance = np.diag(1 / tau_x) + W @ W.T
 
     log_p = 0
 
@@ -494,3 +496,6 @@ def log_predictive_pdf(data, params):
 
     return log_p
 
+
+def rmse(data, params):
+    return np.sqrt(np.nanmean((params.Y - data) ** 2))
