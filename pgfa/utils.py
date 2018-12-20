@@ -4,6 +4,32 @@ import time
 
 
 @numba.njit
+def summarize_feature_allocation_matrix(Zs, burnin=0, thin=1):
+    I = len(Zs)
+    
+    Zs = Zs[:burnin:thin]
+    
+    best_score = 0
+    
+    best_Z = Zs[0]
+    
+    for i in range(I):
+        score = 0
+        
+        for j in range(I):
+            score += get_b_cubed_score(Zs[i], Zs[j])[0]
+        
+        score /= I
+        
+        if score > best_score:
+            best_score = score
+            
+            best_Z = Zs[i]
+    
+    return best_Z
+
+
+@numba.njit
 def get_b_cubed_score(features_true, features_pred):
     n = len(features_pred)
 
