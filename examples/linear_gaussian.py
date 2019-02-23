@@ -12,17 +12,19 @@ from pgfa.utils import Timer
 
 
 def main():
-    seed = 0
+    data_seed = 2
+    param_seed = 0
+    updater = 'pga'
 
-    set_seed(seed)
+    set_seed(data_seed)
 
     ibp = False
-    time = 10000
+    time = 1000
     D = 10
-    K = 5
-    N = 1000
+    K = 20
+    N = 100
 
-    data, data_true, params = simulate_data(D, N, K=K, alpha=2, prop_missing=0.00, tau_v=0.25, tau_x=25)
+    data, data_true, params = simulate_data(D, N, K=K, alpha=2, prop_missing=0.01, tau_v=0.25, tau_x=25)
 
     for d in range(D):
         assert not np.all(np.isnan(data[:, d]))
@@ -31,8 +33,10 @@ def main():
         assert not np.all(np.isnan(data[n]))
 
     model_updater = get_model_updater(
-        feat_alloc_updater_type='g', ibp=ibp, mixed_updates=False
+        feat_alloc_updater_type=updater, ibp=ibp, mixed_updates=False
     )
+
+    set_seed(param_seed)
 
     model = get_model(data, ibp=ibp, K=K)
 
@@ -51,6 +55,8 @@ def main():
     model.params.alpha = 1
 
     print(log_p_true)
+
+    set_seed(0)
 
     timer = Timer()
 
@@ -115,7 +121,17 @@ def get_model_updater(feat_alloc_updater_type='g', ibp=True, mixed_updates=False
     else:
         singletons_updater = None
 
-    if feat_alloc_updater_type == 'g':
+    if feat_alloc_updater_type == 'dpf':
+        feat_alloc_updater = pgfa.updates.DicreteParticleFilterUpdater(
+            annealed=False, max_particles=20, singletons_updater=singletons_updater
+        )
+
+    elif feat_alloc_updater_type == 'dpfa':
+        feat_alloc_updater = pgfa.updates.DicreteParticleFilterUpdater(
+            annealed=True, max_particles=20, singletons_updater=singletons_updater
+        )
+
+    elif feat_alloc_updater_type == 'g':
         feat_alloc_updater = pgfa.updates.GibbsUpdater(singletons_updater=singletons_updater)
 
     elif feat_alloc_updater_type == 'pg':
@@ -125,7 +141,12 @@ def get_model_updater(feat_alloc_updater_type='g', ibp=True, mixed_updates=False
 
     elif feat_alloc_updater_type == 'pga':
         feat_alloc_updater = pgfa.updates.ParticleGibbsUpdater(
-            annealed=True, num_particles=10, singletons_updater=singletons_updater
+            annealed=True, num_particles=20, singletons_updater=singletons_updater
+        )
+
+    elif feat_alloc_updater_type == 'pga-a':
+        feat_alloc_updater = pgfa.updates.ParticleGibbsUpdater(
+            ancestor_resample_prob=1.0, annealed=True, num_particles=20, resample_threshold=0.5, singletons_updater=singletons_updater
         )
 
     elif feat_alloc_updater_type == 'rg':
@@ -176,4 +197,18 @@ def compute_l2_error(data, data_true, params):
 
 
 if __name__ == '__main__':
+#     import line_profiler
+#  
+#     profiler = line_profiler.LineProfiler()
+#  
+#     profiler.add_function(pgfa.updates.DicreteParticleFilterUpdater.update_row)
+#      
+#     profiler.add_function(pgfa.updates.DicreteParticleFilterUpdater._get_new_particle)
+#     
+#     profiler.add_function(pgfa.updates.discrete_particle_filter.DicreteParticleFilterUpdater._resample)
+#  
+#     profiler.run('main()')
+#      
+#     profiler.print_stats()
+
     main()
