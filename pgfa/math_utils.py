@@ -195,7 +195,7 @@ def cholesky_log_det(X):
     return 2 * np.sum(np.log(np.diag(X)))
 
 
-@numba.njit(cache=True)
+# @numba.njit(cache=True)
 def conditional_stratified_resampling(log_w, num_resampled):
     """ Perform conditional stratified resampling.
     
@@ -210,27 +210,29 @@ def conditional_stratified_resampling(log_w, num_resampled):
     -------
     indexes: (ndarray) Indexes of resampled values.
     """
-    W = exp_normalize(log_w)
-
-    U = np.random.uniform(0, W[0])
-
+    log_W = log_normalize(log_w)
+    
+    U = np.random.uniform(0, np.exp(log_W[0]))
+    
     positions = (U - np.floor(num_resampled * U) / num_resampled) + np.arange(num_resampled) / num_resampled
-
+    
     indexes = []
-
-    cumulative_sum = np.cumsum(W)
-
+    
+    log_cumulative_sum = np.logaddexp.accumulate(log_W)
+    
+    log_positions = np.log(positions)
+    
     i, j = 0, 0
-
+    
     while i < num_resampled:
-        if positions[i] < cumulative_sum[j]:
+        if log_positions[i] < log_cumulative_sum[j]:
             indexes.append(j)
-
+            
             i += 1
-
+        
         else:
             j += 1
-
+    
     return indexes
 
 
