@@ -65,6 +65,11 @@ def log_normalize(log_p):
     return log_p - log_sum_exp(log_p)
 
 
+@numba.njit(cache=True)
+def exp_normalize(log_p):
+    return np.exp(log_normalize(log_p))
+
+
 def ffa_rvs(a, b, K, N):
     p = np.random.beta(a, b, size=K)
 
@@ -188,3 +193,77 @@ def cholesky_update(L, x, alpha=1, inplace=True):
 @numba.jit(cache=True, nopython=True)
 def cholesky_log_det(X):
     return 2 * np.sum(np.log(np.diag(X)))
+
+
+@numba.njit(cache=True)
+def conditional_stratified_resampling(log_w, num_resampled):
+    """ Perform conditional stratified resampling.
+    
+    This will enforce that 0 is always in the resampled index set.
+    
+    Parameters
+    ----------
+    log_w: (ndarray) Log weights of particles. Can be unnormalized.
+    num_resampled: (int) Number of indexes to resample.
+    
+    Returns
+    -------
+    indexes: (ndarray) Indexes of resampled values.
+    """
+    W = exp_normalize(log_w)
+
+    U = np.random.uniform(0, W[0])
+
+    positions = (U - np.floor(num_resampled * U) / num_resampled) + np.arange(num_resampled) / num_resampled
+
+    indexes = []
+
+    cumulative_sum = np.cumsum(W)
+
+    i, j = 0, 0
+
+    while i < num_resampled:
+        if positions[i] < cumulative_sum[j]:
+            indexes.append(j)
+
+            i += 1
+
+        else:
+            j += 1
+
+    return indexes
+
+
+@numba.njit(cache=True)
+def stratified_resampling(log_w, num_resampled):
+    """ Perform stratified resampling.
+    
+    Parameters
+    ----------
+    log_w: (ndarray) Log weights of particles. Can be unnormalized.
+    num_resampled: (int) Number of indexes to resample.
+    
+    Returns
+    -------
+    indexes: (ndarray) Indexes of resampled values.
+    """    
+    W = exp_normalize(log_w)
+
+    positions = (np.random.random() + np.arange(num_resampled)) / num_resampled
+
+    indexes = []
+
+    cumulative_sum = np.cumsum(W)
+
+    i, j = 0, 0
+
+    while i < num_resampled:
+        if positions[i] < cumulative_sum[j]:
+            indexes.append(j)
+
+            i += 1
+
+        else:
+            j += 1
+
+    return indexes

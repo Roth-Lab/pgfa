@@ -5,50 +5,64 @@ from collections import defaultdict, Counter
 import numpy as np
 
 from pgfa.feature_allocation_distributions import BetaBernoulliFeatureAllocationDistribution
-from pgfa.updates import GibbsUpdater, ParticleGibbsUpdater, RowGibbsUpdater
+from pgfa.updates import DicreteParticleFilterUpdater, GibbsUpdater, ParticleGibbsUpdater, RowGibbsUpdater
 
 from pgfa.tests.exact_posterior import get_exact_posterior
 from pgfa.tests.mocks import MockDataDistribution, MockParams
 
 
 class Test(unittest.TestCase):
-    K = 4
+    K = 5
     N = 3
     D = 10
 
+    def test_discrete_particle_filter_updater(self):
+        feat_alloc_updater = DicreteParticleFilterUpdater(max_particles=10)
+  
+        model = self._get_model()
+  
+        self._run_test(feat_alloc_updater, model, num_iters=int(1e4))
+
+    def test_discrete_particle_filter_annealed_updater(self):
+        feat_alloc_updater = DicreteParticleFilterUpdater(annealed=True, max_particles=10)
+  
+        model = self._get_model()
+  
+        self._run_test(feat_alloc_updater, model, num_iters=int(1e4))
+
     def test_gibbs(self):
         feat_alloc_updater = GibbsUpdater()
-
+  
         model = self._get_model()
-
+  
         self._run_test(feat_alloc_updater, model, num_iters=int(1e4))
-
+  
     def test_particle_gibbs_updater(self):
         feat_alloc_updater = ParticleGibbsUpdater(annealed=False, num_particles=10, resample_threshold=0.5)
-
+   
         model = self._get_model()
-
+   
         self._run_test(feat_alloc_updater, model, num_iters=int(1e4))
-
+   
     def test_particle_gibbs_annealed_updater(self):
         feat_alloc_updater = ParticleGibbsUpdater(annealed=True, num_particles=10, resample_threshold=0.5)
-
+   
         model = self._get_model()
-
+   
         self._run_test(feat_alloc_updater, model, num_iters=int(1e4))
-
+  
     def test_restricted_row_gibbs(self):
         feat_alloc_updater = RowGibbsUpdater(max_cols=3)
-
+  
         model = self._get_model()
-
+  
         self._run_test(feat_alloc_updater, model, num_iters=int(1e4))
-
+  
     def test_row_gibbs(self):
         feat_alloc_updater = RowGibbsUpdater()
-
+  
         model = self._get_model()
-
+  
         self._run_test(feat_alloc_updater, model, num_iters=int(1e4))
 
     def _get_model(self):
@@ -93,10 +107,10 @@ class Test(unittest.TestCase):
         self._test_posterior(pred_posterior, true_posterior)
 
     def _test_posterior(self, pred_probs, true_probs):
-        print(sorted(pred_probs.items()))
-        print()
-        print(sorted(true_probs.items()))
-        print()
+#         print(sorted(pred_probs.items()))
+#         print()
+#         print(sorted(true_probs.items()))
+#         print()
         for key in true_probs:
             if abs(pred_probs[key] - true_probs[key]) >= 0.02:
                 print(key)
@@ -105,6 +119,7 @@ class Test(unittest.TestCase):
 
 
 class TestModel(object):
+
     def __init__(self, data, dist, feat_alloc_dist, params):
         self.data = data
 
@@ -126,5 +141,5 @@ class TestModel(object):
 
 
 if __name__ == "__main__":
-    #import sys;sys.argv = ['', 'Test.test_gibbs']
+    # import sys;sys.argv = ['', 'Test.test_gibbs']
     unittest.main()
