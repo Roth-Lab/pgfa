@@ -27,6 +27,9 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
         swarm.add_particle(0, None)
         
         for t in range(T):            
+            if swarm.num_particles > self.max_particles:
+                swarm = self._resample(swarm)
+
             new_swarm = ParticleSwarm()
 
             annealing_factor = self._get_annealing_factor(t, T)
@@ -47,9 +50,6 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
                     new_swarm.add_particle(log_W + particle.log_w, particle)
 
             swarm = new_swarm
-
-            if swarm.num_particles > self.max_particles:
-                swarm = self._resample(swarm)
         
         assert np.all(swarm[0].path == conditional_path)
 
