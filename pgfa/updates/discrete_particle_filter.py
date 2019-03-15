@@ -27,9 +27,6 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
         swarm.add_particle(0, None)
         
         for t in range(T):            
-            if swarm.num_particles > self.max_particles:
-                swarm = self._resample(swarm)
-
             new_swarm = ParticleSwarm()
 
             annealing_factor = self._get_annealing_factor(t, T)
@@ -50,6 +47,9 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
                     new_swarm.add_particle(log_W + particle.log_w, particle)
 
             swarm = new_swarm
+
+            if swarm.num_particles > self.max_particles:
+                swarm = self._resample(swarm)
         
         assert np.all(swarm[0].path == conditional_path)
 
@@ -93,18 +93,24 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
         keep_idxs, resample_idxs, log_C = _split_particles(log_W, self.max_particles)
 
         num_resampled_particles = self.max_particles - len(keep_idxs)
-
-        resample_particles = [swarm.particles[i] for i in resample_idxs]
-
-        if 0 in keep_idxs:
-            resample_idxs_sub = self._stratified_resample(num_resampled_particles, resample_particles)
-
+        
+        if num_resampled_particles > 0:
+            resample_particles = [swarm.particles[i] for i in resample_idxs]
+    
+            if 0 in keep_idxs:
+                resample_idxs_sub = self._stratified_resample(num_resampled_particles, resample_particles)
+    
+            else:
+                assert resample_idxs[0] == 0
+    
+                resample_idxs_sub = self._conditional_stratified_resample(num_resampled_particles, resample_particles)
+    
+            resample_idxs = [resample_idxs[i] for i in resample_idxs_sub]
+        
         else:
-            assert resample_idxs[0] == 0
-
-            resample_idxs_sub = self._conditional_stratified_resample(num_resampled_particles, resample_particles)
-
-        resample_idxs = [resample_idxs[i] for i in resample_idxs_sub]
+            assert num_resampled_particles == 0
+            
+            resample_idxs = []
 
         idxs = sorted(keep_idxs + resample_idxs)
         
@@ -160,7 +166,7 @@ def _split_particles(log_W, N):
     kept, resamp = [], []
 
     for i in range(len(log_W)):
-        if log_W[i] > -log_C:
+        if log_W[i] >= -log_C:
             kept.append(i)
 
         else:
