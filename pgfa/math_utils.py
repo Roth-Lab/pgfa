@@ -195,6 +195,34 @@ def cholesky_log_det(X):
     return 2 * np.sum(np.log(np.diag(X)))
 
 
+def conditional_multinomial_resampling(log_w, num_resampled):
+    W = exp_normalize(log_w)
+    
+    multiplicities = np.random.multinomial(num_resampled - 1, W)
+
+    multiplicities[0] += 1
+
+    indexes = []
+
+    for i, m in enumerate(multiplicities):
+        indexes.extend([i] * m)
+
+    return indexes    
+
+
+def multinomial_resampling(log_w, num_resampled):
+    W = exp_normalize(log_w)
+
+    multiplicities = np.random.multinomial(num_resampled, W)
+
+    indexes = []
+
+    for i, m in enumerate(multiplicities):
+        indexes.extend([i] * m)
+
+    return indexes
+
+
 @numba.njit(cache=True)
 def conditional_stratified_resampling(log_w, num_resampled):
     """ Perform conditional stratified resampling.

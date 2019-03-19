@@ -2,7 +2,8 @@ import numba
 import numpy as np
 
 from pgfa.data_structures import Particle, ParticleSwarm
-from pgfa.math_utils import conditional_stratified_resampling, log_sum_exp, stratified_resampling
+from pgfa.math_utils import conditional_stratified_resampling, log_sum_exp, stratified_resampling, \
+    conditional_multinomial_resampling
 from pgfa.updates.base import FeatureAllocationMatrixUpdater
 
 
@@ -89,48 +90,68 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
 
     def _resample(self, swarm):
         log_W = swarm.log_weights
-
-        keep_idxs, resample_idxs, log_C = _split_particles(log_W, self.max_particles)
-
-        num_resampled_particles = self.max_particles - len(keep_idxs)
         
-        if num_resampled_particles > 0:
-            resample_particles = [swarm.particles[i] for i in resample_idxs]
-    
-            if 0 in keep_idxs:
-                resample_idxs_sub = self._stratified_resample(num_resampled_particles, resample_particles)
-    
-            else:
-                assert resample_idxs[0] == 0
-    
-                resample_idxs_sub = self._conditional_stratified_resample(num_resampled_particles, resample_particles)
-    
-            resample_idxs = [resample_idxs[i] for i in resample_idxs_sub]
+        idxs = conditional_multinomial_resampling(swarm.unnormalized_log_weights, self.max_particles)
         
-        else:
-            assert num_resampled_particles == 0
-            
-            resample_idxs = []
-
-        idxs = sorted(keep_idxs + resample_idxs)
-        
-        try:
-            assert idxs[0] == 0
-        
-        except AssertionError:
-            print(resample_idxs)
-            print(keep_idxs)
-
         new_swarm = ParticleSwarm()
-
+         
         for i in idxs:
-            if i in keep_idxs:
-                new_swarm.add_particle(log_W[i], swarm[i])
+            new_swarm.add_particle(log_W[i], swarm[i])
+        
+        return new_swarm 
 
-            else:
-                new_swarm.add_particle(-log_C, swarm[i])
-
-        return new_swarm
+#         log_W = swarm.log_weights      
+#         idxs = np.argsort(swarm.log_weights)[::-1]
+#         
+#         idxs = idxs[:self.max_particles]
+#         
+#         if 0 not in idxs:
+#             idxs[-1] = idxs[0]
+#             
+#             idxs[0] = 0
+#         
+#         idxs = np.sort(idxs)
+#         
+#         new_swarm = ParticleSwarm()
+#         
+#         for i in idxs:
+#             new_swarm.add_particle(log_W[i], swarm[i])
+# 
+#         keep_idxs, resample_idxs, log_C = _split_particles(log_W, self.max_particles)
+#  
+#         num_resampled_particles = self.max_particles - len(keep_idxs)
+#          
+#         resample_particles = [swarm.particles[i] for i in resample_idxs]
+#  
+#         if 0 in keep_idxs:
+#             resample_idxs_sub = self._stratified_resample(num_resampled_particles, resample_particles)
+#  
+#         else:
+#             assert resample_idxs[0] == 0
+#  
+#             resample_idxs_sub = self._conditional_stratified_resample(num_resampled_particles, resample_particles)
+#  
+#         resample_idxs = [resample_idxs[i] for i in resample_idxs_sub]
+#  
+#         idxs = sorted(keep_idxs + resample_idxs)
+#          
+#         try:
+#             assert idxs[0] == 0
+#          
+#         except AssertionError:
+#             print(resample_idxs)
+#             print(keep_idxs)
+#  
+#         new_swarm = ParticleSwarm()
+#  
+#         for i in idxs:
+#             if i in keep_idxs:
+#                 new_swarm.add_particle(log_W[i], swarm[i])
+#  
+#             else:
+#                 new_swarm.add_particle(-log_C, swarm[i])
+# 
+#         return new_swarm
 
     def _conditional_stratified_resample(self, num_resampled, particles):
         log_w = np.array([p.log_w for p in particles])
@@ -162,11 +183,11 @@ def _split_particles(log_W, N):
     B = log_sum_exp(log_W[log_W <= log_kappa])
 
     log_C = np.log(N - A) - B
-
+    
     kept, resamp = [], []
 
     for i in range(len(log_W)):
-        if log_W[i] >= -log_C:
+        if log_W[i] > -log_C:
             kept.append(i)
 
         else:
