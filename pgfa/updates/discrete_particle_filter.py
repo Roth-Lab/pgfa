@@ -2,8 +2,7 @@ import numba
 import numpy as np
 
 from pgfa.data_structures import Particle, ParticleSwarm
-from pgfa.math_utils import conditional_stratified_resampling, log_sum_exp, stratified_resampling, \
-    conditional_multinomial_resampling
+from pgfa.math_utils import conditional_stratified_resampling, log_sum_exp, stratified_resampling
 from pgfa.updates.base import FeatureAllocationMatrixUpdater
 
 
@@ -27,7 +26,10 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
         
         swarm.add_particle(0, None)
         
-        for t in range(T):            
+        for t in range(T):
+            if swarm.num_particles > self.max_particles:
+                swarm = self._resample(swarm)
+        
             new_swarm = ParticleSwarm()
 
             annealing_factor = self._get_annealing_factor(t, T)
@@ -49,9 +51,6 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
 
             swarm = new_swarm
 
-            if swarm.num_particles > self.max_particles:
-                swarm = self._resample(swarm)
-        
         assert np.all(swarm[0].path == conditional_path)
 
         params.Z[row_idx, cols] = swarm.sample().path
@@ -89,79 +88,43 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
         return Particle(log_p, log_w, parent, parent_path + [value])
 
     def _resample(self, swarm):
-        log_W = swarm.log_weights
-        
-        idxs = conditional_multinomial_resampling(swarm.unnormalized_log_weights, self.max_particles)
-        
+        log_W = swarm.log_weights      
+ 
+        keep_idxs, resample_idxs, log_C = _split_particles(log_W, self.max_particles)
+  
+        num_resampled_particles = self.max_particles - len(keep_idxs)
+          
+        resample_log_w = np.array([swarm.unnormalized_log_weights[i] for i in resample_idxs])
+  
+        if 0 in keep_idxs:
+            resample_idxs_sub = stratified_resampling(resample_log_w, num_resampled_particles)
+  
+        else:
+            assert resample_idxs[0] == 0
+  
+            resample_idxs_sub = conditional_stratified_resampling(resample_log_w, num_resampled_particles)
+  
+        resample_idxs = [resample_idxs[i] for i in resample_idxs_sub]
+  
+        idxs = sorted(keep_idxs + resample_idxs)
+          
+        try:
+            assert idxs[0] == 0
+          
+        except AssertionError:
+            print(resample_idxs)
+            print(keep_idxs)
+  
         new_swarm = ParticleSwarm()
-         
+  
         for i in idxs:
-            new_swarm.add_particle(log_W[i], swarm[i])
-        
-        return new_swarm 
-
-#         log_W = swarm.log_weights      
-#         idxs = np.argsort(swarm.log_weights)[::-1]
-#         
-#         idxs = idxs[:self.max_particles]
-#         
-#         if 0 not in idxs:
-#             idxs[-1] = idxs[0]
-#             
-#             idxs[0] = 0
-#         
-#         idxs = np.sort(idxs)
-#         
-#         new_swarm = ParticleSwarm()
-#         
-#         for i in idxs:
-#             new_swarm.add_particle(log_W[i], swarm[i])
-# 
-#         keep_idxs, resample_idxs, log_C = _split_particles(log_W, self.max_particles)
-#  
-#         num_resampled_particles = self.max_particles - len(keep_idxs)
-#          
-#         resample_particles = [swarm.particles[i] for i in resample_idxs]
-#  
-#         if 0 in keep_idxs:
-#             resample_idxs_sub = self._stratified_resample(num_resampled_particles, resample_particles)
-#  
-#         else:
-#             assert resample_idxs[0] == 0
-#  
-#             resample_idxs_sub = self._conditional_stratified_resample(num_resampled_particles, resample_particles)
-#  
-#         resample_idxs = [resample_idxs[i] for i in resample_idxs_sub]
-#  
-#         idxs = sorted(keep_idxs + resample_idxs)
-#          
-#         try:
-#             assert idxs[0] == 0
-#          
-#         except AssertionError:
-#             print(resample_idxs)
-#             print(keep_idxs)
-#  
-#         new_swarm = ParticleSwarm()
-#  
-#         for i in idxs:
-#             if i in keep_idxs:
-#                 new_swarm.add_particle(log_W[i], swarm[i])
-#  
-#             else:
-#                 new_swarm.add_particle(-log_C, swarm[i])
-# 
-#         return new_swarm
-
-    def _conditional_stratified_resample(self, num_resampled, particles):
-        log_w = np.array([p.log_w for p in particles])
-        
-        return conditional_stratified_resampling(log_w, num_resampled)
-
-    def _stratified_resample(self, num_resampled, particles):
-        log_w = np.array([p.log_w for p in particles])
-        
-        return stratified_resampling(log_w, num_resampled)
+            if i in keep_idxs:
+                new_swarm.add_particle(log_W[i], swarm[i])
+  
+            else:
+                new_swarm.add_particle(-log_C, swarm[i])
+ 
+        return new_swarm
 
 
 @numba.njit(cache=True)
