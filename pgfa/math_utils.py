@@ -226,38 +226,52 @@ def multinomial_resampling(log_w, num_resampled):
 @numba.njit(cache=True)
 def conditional_stratified_resampling(log_w, num_resampled):
     """ Perform conditional stratified resampling.
-    
+     
     This will enforce that 0 is always in the resampled index set.
-    
+     
     Parameters
     ----------
     log_w: (ndarray) Log weights of particles. Can be unnormalized.
     num_resampled: (int) Number of indexes to resample.
-    
+     
     Returns
     -------
     indexes: (ndarray) Indexes of resampled values.
     """
-    W = exp_normalize(log_w)
-    
-    U = np.random.uniform(0, W[0])
-    
-    U = U - np.floor(num_resampled * U) / num_resampled
-    
-    positions = U + np.arange(num_resampled) / num_resampled
-    
+    W = exp_normalize(log_w) + 1e-10
+     
+    W = W / np.sum(W)
+     
+    perm = np.random.permutation(len(W))
+     
+    inv_perm = np.empty(perm.shape, dtype=np.int64)
+     
+    inv_perm[perm] = np.arange(len(perm))
+     
+    W = W[perm]
+     
     cumulative_sum = np.cumsum(W)
-    
-    indexes = [0]
-
-    i, j = 1, 0
-
+     
+    if perm[0] == 0:
+        U = np.random.uniform(0, cumulative_sum[0])
+     
+    else:
+        U = np.random.uniform(cumulative_sum[perm[0] - 1], cumulative_sum[perm[0]])
+     
+    U = U - np.floor(num_resampled * U) / num_resampled
+     
+    positions = U + np.arange(num_resampled) / num_resampled
+     
+    indexes = []
+ 
+    i, j = 0, 0
+ 
     while i < num_resampled:
-        if positions[i] < cumulative_sum[j]:
-            indexes.append(j)
-
+        if positions[i] <= cumulative_sum[j]:
+            indexes.append(inv_perm[j])
+ 
             i += 1
-
+ 
         else:
             j += 1
 
