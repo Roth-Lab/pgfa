@@ -7,8 +7,8 @@ from pgfa.updates.base import FeatureAllocationMatrixUpdater
 
 class ParticleGibbsUpdater(FeatureAllocationMatrixUpdater):
 
-    def __init__(self, annealed=False, num_particles=10, resample_scheme='multinomial', resample_threshold=0.5, singletons_updater=None):
-        self.annealed = annealed
+    def __init__(self, annealing_power=0.0, num_particles=10, resample_scheme='multinomial', resample_threshold=0.5, singletons_updater=None):
+        self.annealing_power = annealing_power
 
         self.num_particles = num_particles
         
@@ -65,11 +65,13 @@ class ParticleGibbsUpdater(FeatureAllocationMatrixUpdater):
         return params
     
     def _get_annealing_factor(self, t, T):
-        if self.annealed:
-            annealing_factor = (t + 1) / T
+        if self.annealing_power == 'K':
+            power = T
         
         else:
-            annealing_factor = 1
+            power = self.annealing_power
+        
+        annealing_factor = ((t + 1) / T) ** power
             
         return annealing_factor
 
