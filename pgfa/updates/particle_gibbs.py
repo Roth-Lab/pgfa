@@ -1,16 +1,18 @@
 import numpy as np
 
 from pgfa.data_structures import Particle, ParticleSwarm
-from pgfa.math_utils import conditional_stratified_resampling, discrete_rvs, log_sum_exp
+from pgfa.math_utils import conditional_multinomial_resampling, conditional_stratified_resampling, discrete_rvs, log_sum_exp
 from pgfa.updates.base import FeatureAllocationMatrixUpdater
 
 
 class ParticleGibbsUpdater(FeatureAllocationMatrixUpdater):
 
-    def __init__(self, annealed=False, num_particles=10, resample_threshold=0.5, singletons_updater=None):
+    def __init__(self, annealed=False, num_particles=10, resample_scheme='multinomial', resample_threshold=0.5, singletons_updater=None):
         self.annealed = annealed
 
         self.num_particles = num_particles
+        
+        self.resample_scheme = resample_scheme
 
         self.resample_threshold = resample_threshold
 
@@ -105,8 +107,21 @@ class ParticleGibbsUpdater(FeatureAllocationMatrixUpdater):
     def _resample(self, swarm):
         if swarm.relative_ess <= self.resample_threshold:
             new_swarm = ParticleSwarm()
+            
+            if self.resample_scheme == 'multinomial':
+                idxs = conditional_multinomial_resampling(swarm.unnormalized_log_weights, self.num_particles)
+            
+            elif self.resample_scheme == 'stratified':
+                idxs = conditional_stratified_resampling(swarm.unnormalized_log_weights, self.num_particles)
+            
+            else:
+                raise Exception('Unknown resampling scheme: {}'.format(self.resample_scheme))
+            
+            idxs = sorted(idxs)
+            
+            assert idxs[0] == 0
 
-            for idx in conditional_stratified_resampling(swarm.unnormalized_log_weights, self.num_particles):
+            for idx in idxs:
                 new_swarm.add_particle(0, swarm.particles[idx])
 
         else:
