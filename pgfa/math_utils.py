@@ -12,6 +12,11 @@ def discrete_rvs(p):
     p = p / np.sum(p)
     return np.random.multinomial(1, p).argmax()
 
+
+def discrete_rvs_gumbel_trick(log_p):
+    U = np.random.gumbel(size=len(log_p))
+    
+    return np.argmax(log_p + U)
 #   
 # @numba.njit(cache=True)
 # def discrete_rvs(p):
@@ -268,6 +273,27 @@ def multinomial_resampling(log_w, num_resampled):
 #             j += 1
 # 
 #     return indexes  
+def conditional_gumbel_resampling(log_w, num_resampled):
+    U = np.random.gumbel(size=len(log_w))
+    
+    x = log_w + U
+    
+    idxs = np.argsort(x)[-num_resampled:]
+    
+    if 0 not in idxs:
+        idxs[0] = 0
+    
+    return idxs
+
+
+def gumbel_resampling(log_w, num_resampled):
+    U = np.random.gumbel(size=len(log_w))
+    
+    x = log_w + U
+    
+    return np.argsort(x)[-num_resampled:]
+#     return np.argpartition(x, -num_resampled)[-num_resampled:]
+
 
 # @numba.njit(cache=True)
 def conditional_stratified_resampling(log_w, num_resampled):
