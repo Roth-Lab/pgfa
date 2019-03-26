@@ -2,7 +2,7 @@ from collections import namedtuple
 
 import numpy as np
 
-from pgfa.math_utils import discrete_rvs, log_sum_exp
+from pgfa.math_utils import discrete_rvs_gumbel_trick, log_sum_exp
 
 
 class ParticleSwarm(object):
@@ -48,8 +48,6 @@ class ParticleSwarm(object):
     def weights(self):
         weights = np.exp(self.log_weights)
 
-        weights = weights / weights.sum()
-
         return weights
 
     def add_particle(self, log_w, particle):
@@ -65,7 +63,7 @@ class ParticleSwarm(object):
         self._log_norm_const = None
 
     def sample(self):
-        idx = discrete_rvs(self.weights)
+        idx = discrete_rvs_gumbel_trick(self.unnormalized_log_weights)
 
         return self.particles[idx]
 
