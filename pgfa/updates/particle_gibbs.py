@@ -1,7 +1,7 @@
 import numpy as np
 
 from pgfa.data_structures import Particle, ParticleSwarm
-from pgfa.math_utils import conditional_multinomial_resampling, conditional_stratified_resampling, discrete_rvs, log_sum_exp
+from pgfa.math_utils import conditional_multinomial_resampling, conditional_stratified_resampling, discrete_rvs_gumbel_trick, log_sum_exp
 from pgfa.updates.base import FeatureAllocationMatrixUpdater
 
 
@@ -100,7 +100,7 @@ class ParticleGibbsUpdater(FeatureAllocationMatrixUpdater):
         log_norm = log_sum_exp(log_q)
         
         if value is None:
-            value = discrete_rvs(np.exp(log_q - log_norm)) 
+            value = discrete_rvs_gumbel_trick(log_q) 
         
         log_w = log_norm - parent_log_p
         
