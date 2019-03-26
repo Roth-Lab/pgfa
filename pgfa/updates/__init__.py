@@ -1,5 +1,6 @@
 from .discrete_particle_filter import DicreteParticleFilterUpdater
 from .gibbs import GibbsUpdater
+from .gumbel_particle_filter import GumbelParticleFilterUpdater
 from .metropolis_hastings import MetropolisHastingsUpdater
 from .mixture import GibbsMixtureUpdater
 from .particle_gibbs import ParticleGibbsUpdater
