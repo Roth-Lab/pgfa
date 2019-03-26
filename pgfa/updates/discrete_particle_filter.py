@@ -59,13 +59,13 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
 
     def _get_annealing_factor(self, t, T):
         if self.annealing_power == 'K':
-            annealing_power = T
+            power = T
         
         else:
-            annealing_power = self.annealing_power
+            power = self.annealing_power
         
-        annealing_factor = ((t + 1) / T) ** annealing_power
-        
+        annealing_factor = ((t + 1) / T) ** power
+            
         return annealing_factor
 
     def _get_new_particle(self, annealing_factor, col, data, dist, log_feat_probs, params, parent, row_idx, value):
