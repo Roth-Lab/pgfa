@@ -8,8 +8,8 @@ from pgfa.updates.base import FeatureAllocationMatrixUpdater
 
 class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
 
-    def __init__(self, annealed=False, max_particles=10, singletons_updater=None):
-        self.annealed = annealed
+    def __init__(self, annealing_power=0.0, max_particles=10, singletons_updater=None):
+        self.annealing_power = annealing_power
         
         self.max_particles = max_particles
 
@@ -58,12 +58,14 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
         return params
 
     def _get_annealing_factor(self, t, T):
-        if self.annealed:
-            annealing_factor = (t + 1) / T
+        if self.annealing_power == 'K':
+            annealing_power = T
         
         else:
-            annealing_factor = 1
-            
+            annealing_power = self.annealing_power
+        
+        annealing_factor = ((t + 1) / T) ** annealing_power
+        
         return annealing_factor
 
     def _get_new_particle(self, annealing_factor, col, data, dist, log_feat_probs, params, parent, row_idx, value):
