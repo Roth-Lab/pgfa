@@ -10,21 +10,27 @@ import pgfa.updates
 
 from pgfa.utils import Timer
 
+np.seterr(all='warn')
+
 
 def main():
-    data_seed = 2
-    param_seed = 0
-    updater = 'pga'
+    annealing_power = 1.0
+    num_particles = 20
+    
+    data_seed = 1
+    param_seed = 1
+    run_seed = 0
+    updater = 'dpf'
 
     set_seed(data_seed)
 
     ibp = False
-    time = 1000
+    time = np.inf
     D = 10
     K = 20
-    N = 100
+    N = 1000
 
-    data, data_true, params = simulate_data(D, N, K=K, alpha=2, prop_missing=0.01, tau_v=0.25, tau_x=25)
+    data, data_true, params = simulate_data(D, N, K=K, alpha=2, prop_missing=0.00, tau_v=0.25, tau_x=25)
 
     for d in range(D):
         assert not np.all(np.isnan(data[:, d]))
@@ -33,14 +39,14 @@ def main():
         assert not np.all(np.isnan(data[n]))
 
     model_updater = get_model_updater(
-        feat_alloc_updater_type=updater, ibp=ibp, mixed_updates=False
+        annealing_power=annealing_power, feat_alloc_updater_type=updater, ibp=ibp, mixed_updates=False, num_particles=num_particles
     )
 
     set_seed(param_seed)
 
     model = get_model(data, ibp=ibp, K=K)
 
-    print(np.sum(params.Z, axis=0))
+    print(sorted(np.sum(params.Z, axis=0)))
 
     print('@' * 100)
 
@@ -49,25 +55,35 @@ def main():
     model.params = params.copy()
 
     log_p_true = model.log_p
+    
+#     model.params.Z = old_params.Z
 
     model.params = old_params.copy()
-
-    model.params.alpha = 1
+    
+#     model.params.Z = params.Z.copy()
+# 
+#     model.params.alpha = params.alpha
 
     print(log_p_true)
 
-    set_seed(0)
+    set_seed(run_seed)
 
     timer = Timer()
 
     i = 0
+    
+    if updater == 'g':
+        thin = 10
+    
+    else:
+        thin = 1
 
     while timer.elapsed < time:
-        if i % 10 == 0:
+        if i % thin == 0:
             print(
                 i,
-                model.params.K,
                 model.log_p,
+                model.params.K,
                 (model.log_p - log_p_true) / abs(log_p_true),
                 compute_l2_error(data, data_true, model.params)
             )
@@ -81,12 +97,26 @@ def main():
                 model.feat_alloc_dist.log_p(model.params),
                 model.params_dist.log_p(model.params)
             )
+            
+            print(sorted(np.sum(model.params.Z, axis=0)))
+            
+            print(model.params.alpha, model.params.tau_v, model.params.tau_x)
+            
+            Vs = np.abs(model.params.V).min(axis=1)
+            
+            Zs = np.sum(model.params.Z, axis=0)
+            
+            idxs = np.argsort(np.sum(model.params.Z, axis=0))
+            
+            print([(Zs[i], Vs[i]) for i in idxs])
+            
+            print(Vs.min())
 
             print('#' * 100)
 
         timer.start()
 
-        model_updater.update(model)
+        model_updater.update(model)  # , alpha_updates=0)#, param_updates=0)
 
         timer.stop()
 
@@ -114,7 +144,7 @@ def get_model(data, ibp=False, K=None):
     return pgfa.models.linear_gaussian.Model(data, feat_alloc_dist)
 
 
-def get_model_updater(feat_alloc_updater_type='g', ibp=True, mixed_updates=False):
+def get_model_updater(feat_alloc_updater_type='g', annealing_power=0, ibp=True, mixed_updates=False, num_particles=20):
     if ibp:
         singletons_updater = pgfa.models.linear_gaussian.PriorSingletonsUpdater()
 
@@ -123,30 +153,20 @@ def get_model_updater(feat_alloc_updater_type='g', ibp=True, mixed_updates=False
 
     if feat_alloc_updater_type == 'dpf':
         feat_alloc_updater = pgfa.updates.DicreteParticleFilterUpdater(
-            annealed=False, max_particles=20, singletons_updater=singletons_updater
-        )
-
-    elif feat_alloc_updater_type == 'dpfa':
-        feat_alloc_updater = pgfa.updates.DicreteParticleFilterUpdater(
-            annealed=True, max_particles=20, singletons_updater=singletons_updater
+            annealing_power=annealing_power, max_particles=num_particles, singletons_updater=singletons_updater
         )
 
     elif feat_alloc_updater_type == 'g':
         feat_alloc_updater = pgfa.updates.GibbsUpdater(singletons_updater=singletons_updater)
+        
+    elif feat_alloc_updater_type == 'gpf':
+        feat_alloc_updater = pgfa.updates.GumbelParticleFilterUpdater(
+            annealing_power=annealing_power, max_particles=num_particles
+            )
 
     elif feat_alloc_updater_type == 'pg':
         feat_alloc_updater = pgfa.updates.ParticleGibbsUpdater(
-            annealed=False, num_particles=20, singletons_updater=singletons_updater
-        )
-
-    elif feat_alloc_updater_type == 'pga':
-        feat_alloc_updater = pgfa.updates.ParticleGibbsUpdater(
-            annealed=True, num_particles=20, singletons_updater=singletons_updater
-        )
-
-    elif feat_alloc_updater_type == 'pga-a':
-        feat_alloc_updater = pgfa.updates.ParticleGibbsUpdater(
-            ancestor_resample_prob=1.0, annealed=True, num_particles=20, resample_threshold=0.5, singletons_updater=singletons_updater
+            annealing_power=annealing_power, num_particles=num_particles, singletons_updater=singletons_updater
         )
 
     elif feat_alloc_updater_type == 'rg':
@@ -162,6 +182,8 @@ def simulate_data(D, N, K=None, alpha=1, prop_missing=0, tau_v=1, tau_x=1):
     feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K=K)
 
     Z = feat_alloc_dist.rvs(alpha, N)
+    
+#     Z = np.random.randint(0, 2, size=(N, K))
 
     K = Z.shape[1]
 
@@ -190,6 +212,9 @@ def simulate_data(D, N, K=None, alpha=1, prop_missing=0, tau_v=1, tau_x=1):
 
 def compute_l2_error(data, data_true, params):
     idxs = np.isnan(data)
+    
+    if not np.all(idxs):
+        return 0
 
     data_pred = params.Z @ params.V
 
