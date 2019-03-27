@@ -124,7 +124,7 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
                 new_swarm.add_particle(log_W[i], swarm[i])
   
             else:
-                new_swarm.add_particle(-log_C, swarm[i])
+                new_swarm.add_particle(log_W[i], swarm[i])
  
         return new_swarm
 
