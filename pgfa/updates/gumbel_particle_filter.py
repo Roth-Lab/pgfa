@@ -1,16 +1,19 @@
 import numpy as np
 
 from pgfa.data_structures import Particle, ParticleSwarm
-from pgfa.math_utils import conditional_gumbel_resampling
+from pgfa.math_utils import conditional_gumbel_resampling, \
+    conditional_multinomial_resampling
 from pgfa.updates.base import FeatureAllocationMatrixUpdater
 
 
 class GumbelParticleFilterUpdater(FeatureAllocationMatrixUpdater):
 
-    def __init__(self, annealing_power=0.0, max_particles=10, singletons_updater=None):
+    def __init__(self, annealing_power=0.0, max_particles=10, replacement=False, singletons_updater=None):
         self.annealing_power = annealing_power
         
         self.max_particles = max_particles
+        
+        self.replacement = replacement
 
         self.singletons_updater = singletons_updater
 
@@ -90,8 +93,12 @@ class GumbelParticleFilterUpdater(FeatureAllocationMatrixUpdater):
 
     def _resample(self, swarm):
         log_W = swarm.log_weights      
- 
-        idxs = conditional_gumbel_resampling(swarm.unnormalized_log_weights, self.max_particles)
+        
+        if self.replacement:
+            idxs = conditional_multinomial_resampling(swarm.unnormalized_log_weights, self.max_particles)
+        
+        else:
+            idxs = conditional_gumbel_resampling(swarm.unnormalized_log_weights, self.max_particles)
         
         idxs = np.sort(idxs)
      
