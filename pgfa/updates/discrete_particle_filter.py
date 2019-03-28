@@ -5,6 +5,8 @@ from pgfa.data_structures import Particle, ParticleSwarm
 from pgfa.math_utils import conditional_stratified_resampling, log_sum_exp, stratified_resampling
 from pgfa.updates.base import FeatureAllocationMatrixUpdater
 
+import scipy.optimize
+
 
 class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
 
@@ -97,17 +99,21 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
         num_resampled_particles = self.max_particles - len(keep_idxs)
           
         resample_log_w = np.array([swarm.unnormalized_log_weights[i] for i in resample_idxs])
-  
-        if 0 in keep_idxs:
-            resample_idxs_sub = stratified_resampling(resample_log_w, num_resampled_particles)
-  
+        
+        if num_resampled_particles > 0:
+            if 0 in keep_idxs:
+                resample_idxs_sub = stratified_resampling(resample_log_w, num_resampled_particles)
+      
+            else:
+                assert resample_idxs[0] == 0
+      
+                resample_idxs_sub = conditional_stratified_resampling(resample_log_w, num_resampled_particles)
+      
+            resample_idxs = [resample_idxs[i] for i in resample_idxs_sub]
+        
         else:
-            assert resample_idxs[0] == 0
-  
-            resample_idxs_sub = conditional_stratified_resampling(resample_log_w, num_resampled_particles)
-  
-        resample_idxs = [resample_idxs[i] for i in resample_idxs_sub]
-  
+            resample_idxs = []
+      
         idxs = sorted(keep_idxs + resample_idxs)
           
         try:
@@ -129,34 +135,67 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
         return new_swarm
 
 
-@numba.njit(cache=True)
-def _split_particles(log_W, N):
-    for idx in np.argsort(log_W):
-        log_kappa = log_W[idx]
+def _split_particles(log_W, N):    
 
-        log_ratio = log_W - log_kappa
-
-        log_ratio[log_ratio > 0] = 0
-
-        total = log_sum_exp(log_ratio)
-
-        if total <= np.log(N):
-            break
-
-    A = np.sum(log_W > log_kappa)
-
-    B = log_sum_exp(log_W[log_W <= log_kappa])
-
-    log_C = np.log(N - A) - B
+    def f(x):
+        y = log_W - x
+        y[y >= 0] = 0
+        return log_sum_exp(y)
     
+    l = scipy.optimize.bisect(lambda x:f(x) - np.log(N), log_W.min(), 1000)
+    
+    log_C = -l
+
     kept, resamp = [], []
 
     for i in range(len(log_W)):
-        if log_W[i] > log_kappa:
+        if log_W[i] > -log_C:
             kept.append(i)
 
         else:
             resamp.append(i)
 
-    return kept, resamp, log_C
+    return kept, resamp, log_C    
+
+# @numba.njit(cache=True)
+# def _split_particles(log_W, N):
+#     for idx in np.argsort(log_W):
+#         log_kappa = log_W[idx]
+# 
+#         log_ratio = log_W - log_kappa
+# 
+#         log_ratio[log_ratio > 0] = 0
+# 
+#         total = log_sum_exp(log_ratio)
+# 
+#         if total <= np.log(N):
+#             break
+# 
+#     A = np.sum(log_W > log_kappa)
+# 
+#     B = log_sum_exp(log_W[log_W <= log_kappa])
+# 
+#     log_C = np.log(N - A) - B
+#     
+#     W = np.exp(log_W)
+#     
+#     def f(x):
+#         y = W / x
+#         y[y >= 1] = 1
+#         return np.sum(y)
+#     
+#     print(scipy.optimize.bisect(lambda x:f(x) - N, 0, 1000), np.exp(-log_C), np.exp(log_kappa))
+#     
+# #     print(log_C, -log_kappa)
+#     
+#     kept, resamp = [], []
+# 
+#     for i in range(len(log_W)):
+#         if log_W[i] > log_kappa:
+#             kept.append(i)
+# 
+#         else:
+#             resamp.append(i)
+# 
+#     return kept, resamp, log_C
 
