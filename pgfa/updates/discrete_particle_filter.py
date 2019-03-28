@@ -124,7 +124,7 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
                 new_swarm.add_particle(log_W[i], swarm[i])
   
             else:
-                new_swarm.add_particle(log_W[i], swarm[i])
+                new_swarm.add_particle(-log_C, swarm[i])
  
         return new_swarm
 
@@ -152,7 +152,7 @@ def _split_particles(log_W, N):
     kept, resamp = [], []
 
     for i in range(len(log_W)):
-        if log_W[i] > -log_C:
+        if log_W[i] > log_kappa:
             kept.append(i)
 
         else:
