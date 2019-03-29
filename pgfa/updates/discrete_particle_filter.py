@@ -1,11 +1,9 @@
-import numba
 import numpy as np
+import scipy.optimize
 
 from pgfa.data_structures import Particle, ParticleSwarm
-from pgfa.math_utils import conditional_stratified_resampling, log_sum_exp, stratified_resampling
+from pgfa.math_utils import bernoulli_rvs, log_sum_exp
 from pgfa.updates.base import FeatureAllocationMatrixUpdater
-
-import scipy.optimize
 
 
 class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
@@ -90,112 +88,143 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
         log_w = prior + log_p - parent_log_p
 
         return Particle(log_p, log_w, parent, parent_path + [value])
-
+    
     def _resample(self, swarm):
-        log_W = swarm.log_weights      
- 
-        keep_idxs, resample_idxs, log_C = _split_particles(log_W, self.max_particles)
-  
-        num_resampled_particles = self.max_particles - len(keep_idxs)
-          
-        resample_log_w = np.array([swarm.unnormalized_log_weights[i] for i in resample_idxs])
+        log_W = swarm.log_weights
         
-        if num_resampled_particles > 0:
-            if 0 in keep_idxs:
-                resample_idxs_sub = stratified_resampling(resample_log_w, num_resampled_particles)
-      
-            else:
-                assert resample_idxs[0] == 0
-      
-                resample_idxs_sub = conditional_stratified_resampling(resample_log_w, num_resampled_particles)
-      
-            resample_idxs = [resample_idxs[i] for i in resample_idxs_sub]
+        def f(x):
+            y = log_W - x
+            y[y >= 0] = 0
+            return log_sum_exp(y)
         
-        else:
-            resample_idxs = []
-      
-        idxs = sorted(keep_idxs + resample_idxs)
-          
-        try:
-            assert idxs[0] == 0
-          
-        except AssertionError:
-            print(resample_idxs)
-            print(keep_idxs)
-  
+        log_l = scipy.optimize.bisect(lambda x:f(x) - np.log(self.max_particles), log_W.min(), 1000)
+        
         new_swarm = ParticleSwarm()
-  
-        for i in idxs:
-            if i in keep_idxs:
-                new_swarm.add_particle(log_W[i], swarm[i])
-  
-            else:
-                new_swarm.add_particle(-log_C, swarm[i])
- 
-        return new_swarm
-
-
-def _split_particles(log_W, N):    
-
-    def f(x):
-        y = log_W - x
-        y[y >= 0] = 0
-        return log_sum_exp(y)
-    
-    l = scipy.optimize.bisect(lambda x:f(x) - np.log(N), log_W.min(), 1000)
-    
-    log_C = -l
-
-    kept, resamp = [], []
-
-    for i in range(len(log_W)):
-        if log_W[i] > -log_C:
-            kept.append(i)
-
+        
+        if log_W[0] >= log_l:
+            new_swarm.add_particle(log_W[0], swarm[0])
+        
         else:
-            resamp.append(i)
-
-    return kept, resamp, log_C    
-
-# @numba.njit(cache=True)
-# def _split_particles(log_W, N):
-#     for idx in np.argsort(log_W):
-#         log_kappa = log_W[idx]
+            new_swarm.add_particle(log_l, swarm[0])
+        
+        for i in range(1, swarm.num_particles):
+            if log_W[i] >= log_l:
+                new_swarm.add_particle(log_W[i], swarm[i])
+            
+            else:
+                if bernoulli_rvs(np.exp(log_W[i] - log_l)) == 1:
+                    new_swarm.add_particle(log_l, swarm[i])
+        
+        return new_swarm
 # 
-#         log_ratio = log_W - log_kappa
+# #     def _resample(self, swarm):
+# #         log_W = swarm.log_weights      
+# #  
+# #         keep_idxs, resample_idxs, log_C = _split_particles(log_W, self.max_particles)
+# #   
+# #         num_resampled_particles = self.max_particles - len(keep_idxs)
+# #           
+# #         resample_log_w = np.array([swarm.unnormalized_log_weights[i] for i in resample_idxs])
+# #         
+# #         if num_resampled_particles > 0:
+# #             if 0 in keep_idxs:
+# #                 resample_idxs_sub = stratified_resampling(resample_log_w, num_resampled_particles)
+# #       
+# #             else:
+# #                 assert resample_idxs[0] == 0
+# #       
+# #                 resample_idxs_sub = conditional_stratified_resampling(resample_log_w, num_resampled_particles)
+# #   
+# #             resample_idxs = [resample_idxs[i] for i in resample_idxs_sub]
+# #         
+# #         else:
+# #             resample_idxs = []
+# #   
+# #         idxs = sorted(keep_idxs + resample_idxs)
+# #           
+# #         try:
+# #             assert idxs[0] == 0
+# #           
+# #         except AssertionError:
+# #             print(resample_idxs)
+# #             print(keep_idxs)
+# #             print(-log_C, log_W[0])
+# #   
+# #         new_swarm = ParticleSwarm()
+# #   
+# #         for i in idxs:
+# #             if i in keep_idxs:
+# #                 new_swarm.add_particle(log_W[i], swarm[i])
+# #   
+# #             else:
+# #                 new_swarm.add_particle(-log_C, swarm[i])
+# #  
+# #         return new_swarm
 # 
-#         log_ratio[log_ratio > 0] = 0
 # 
-#         total = log_sum_exp(log_ratio)
+# def _split_particles(log_W, N):    
 # 
-#         if total <= np.log(N):
-#             break
-# 
-#     A = np.sum(log_W > log_kappa)
-# 
-#     B = log_sum_exp(log_W[log_W <= log_kappa])
-# 
-#     log_C = np.log(N - A) - B
-#     
-#     W = np.exp(log_W)
-#     
 #     def f(x):
-#         y = W / x
-#         y[y >= 1] = 1
-#         return np.sum(y)
+#         y = log_W + x
+#         y[y > 0] = 0
+#         return log_sum_exp(y)
 #     
-#     print(scipy.optimize.bisect(lambda x:f(x) - N, 0, 1000), np.exp(-log_C), np.exp(log_kappa))
-#     
-# #     print(log_C, -log_kappa)
+#     log_C = scipy.optimize.bisect(lambda x:f(x) - np.log(N), log_W.min(), 1000)
 #     
 #     kept, resamp = [], []
 # 
 #     for i in range(len(log_W)):
-#         if log_W[i] > log_kappa:
+#         if log_W[i] > -log_C:
 #             kept.append(i)
 # 
 #         else:
 #             resamp.append(i)
+#     
+#     # TODO: Need this to hack around the case we won't resample, but also don't keep 0 (conditional path)
+#     if (len(kept) == N) and (0 not in kept):
+#         kept, resamp, log_C = _split_particles(log_W, N - 1)
 # 
-#     return kept, resamp, log_C
+#     return kept, resamp, log_C    
+# 
+# # @numba.njit(cache=True)
+# # def _split_particles(log_W, N):
+# #     for idx in np.argsort(log_W):
+# #         log_kappa = log_W[idx]
+# # 
+# #         log_ratio = log_W - log_kappa
+# # 
+# #         log_ratio[log_ratio > 0] = 0
+# # 
+# #         total = log_sum_exp(log_ratio)
+# # 
+# #         if total <= np.log(N):
+# #             break
+# # 
+# #     A = np.sum(log_W > log_kappa)
+# # 
+# #     B = log_sum_exp(log_W[log_W <= log_kappa])
+# # 
+# #     log_C = np.log(N - A) - B
+# #     
+# #     W = np.exp(log_W)
+# #     
+# #     def f(x):
+# #         y = W / x
+# #         y[y >= 1] = 1
+# #         return np.sum(y)
+# #     
+# #     print(scipy.optimize.bisect(lambda x:f(x) - N, 0, 1000), np.exp(-log_C), np.exp(log_kappa))
+# #     
+# # #     print(log_C, -log_kappa)
+# #     
+# #     kept, resamp = [], []
+# # 
+# #     for i in range(len(log_W)):
+# #         if log_W[i] > log_kappa:
+# #             kept.append(i)
+# # 
+# #         else:
+# #             resamp.append(i)
+# # 
+# #     return kept, resamp, log_C
 
