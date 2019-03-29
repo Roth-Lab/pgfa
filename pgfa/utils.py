@@ -2,6 +2,45 @@ import numba
 import numpy as np
 import time
 
+import pgfa.updates
+
+
+def get_feat_alloc_updater(mixed_updates=False, updater='g', updater_kwargs={}):
+    if updater == 'dpf':   
+        feat_alloc_updater = pgfa.updates.DicreteParticleFilterUpdater(**updater_kwargs)
+    
+    elif updater == 'g':
+        feat_alloc_updater = pgfa.updates.GibbsUpdater(**updater_kwargs)
+        
+    elif updater == 'gpf':
+        feat_alloc_updater = pgfa.updates.GumbelParticleFilterUpdater(**updater_kwargs)
+
+    elif updater == 'pg':
+        feat_alloc_updater = pgfa.updates.ParticleGibbsUpdater(**updater_kwargs)
+
+    elif updater == 'rg':
+        feat_alloc_updater = pgfa.updates.RowGibbsUpdater(**updater_kwargs)
+    
+    else:
+        raise Exception('Unrecognized feature allocation updater: {}'.format(updater))
+    
+    if mixed_updates:
+        feat_alloc_updater = pgfa.updates.GibbsMixtureUpdater(feat_alloc_updater)
+
+    return feat_alloc_updater
+
+
+def set_seed(seed):
+    if seed is not None:
+        np.random.seed(seed)
+
+        set_numba_seed(seed)
+
+    
+@numba.jit
+def set_numba_seed(seed):
+    np.random.seed(seed)
+
 
 @numba.njit
 def summarize_feature_allocation_matrix(Zs, burnin=0, thin=1):
