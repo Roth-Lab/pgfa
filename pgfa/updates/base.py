@@ -2,6 +2,7 @@ import numpy as np
 
 
 class FeatureAllocationMatrixUpdater(object):
+
     def __init__(self, singletons_updater=None):
         self.singletons_updater = singletons_updater
 
@@ -10,10 +11,11 @@ class FeatureAllocationMatrixUpdater(object):
 
         for row_idx in np.random.permutation(num_rows):
             cols = model.feat_alloc_dist.get_update_cols(model.params, row_idx)
+            
+            if len(cols) > 0:
+                feat_probs = model.feat_alloc_dist.get_feature_probs(model.params, row_idx)
 
-            feat_probs = model.feat_alloc_dist.get_feature_probs(model.params, row_idx)
-
-            model.params = self.update_row(cols, model.data, model.data_dist, feat_probs, model.params, row_idx)
+                model.params = self.update_row(cols, model.data, model.data_dist, feat_probs, model.params, row_idx)
 
             if self.singletons_updater is not None:
                 self.singletons_updater.update_row(model, row_idx)
