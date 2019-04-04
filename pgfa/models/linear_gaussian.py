@@ -9,6 +9,7 @@ import pgfa.models.base
 
 
 class Model(pgfa.models.base.AbstractModel):
+
     @staticmethod
     def get_default_params(data, feat_alloc_dist):
         D = data.shape[1]
@@ -33,6 +34,7 @@ class Model(pgfa.models.base.AbstractModel):
 
 
 class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
+
     def _update_model_params(self, model):
         update_V(model)
 
@@ -42,6 +44,7 @@ class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
 
 
 class Parameters(pgfa.models.base.AbstractParameters):
+
     def __init__(self, alpha, alpha_prior, tau_v, tau_v_prior, tau_x, tau_x_prior, V, Z):
         self.alpha = float(alpha)
 
@@ -165,6 +168,7 @@ def update_tau_x(model):
 # Densities and proposals
 #=========================================================================
 class DataDistribution(pgfa.models.base.AbstractDataDistribution):
+
     def log_p(self, data, params):
         t_x = params.tau_x
 
@@ -187,6 +191,7 @@ class DataDistribution(pgfa.models.base.AbstractDataDistribution):
 
 
 class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
+
     def log_p(self, params):
         alpha = params.alpha
         t_v = params.tau_v
@@ -247,6 +252,7 @@ def _log_p_row(t_x, x, z, V):
 # Singletons updaters
 #=========================================================================
 class PriorSingletonsUpdater(object):
+
     def update_row(self, model, row_idx):
         alpha = model.params.alpha
         tau_v = model.params.tau_v
@@ -314,3 +320,96 @@ class PriorSingletonsUpdater(object):
         m = self._get_column_counts(Z, row_idx)
 
         return np.atleast_1d(np.squeeze(np.where(m == 0)))
+
+    
+class CollapsedSingletonsUpdater(object):
+        
+    def update_row(self, model, row_idx):
+        alpha = model.params.alpha
+        t_v = model.params.tau_v
+        t_x = model.params.tau_x
+        V = model.params.V
+        Z = model.params.Z
+        X = model.data
+
+        D = model.params.D
+        N = model.params.N
+
+        m = np.sum(Z, axis=0)
+
+        m -= Z[row_idx]
+
+        k_old = np.sum(m == 0)
+
+        k_new = np.random.poisson(alpha / N)
+
+        if k_new == k_old:
+            return model.params
+
+        non_singletons_idxs = np.atleast_1d(np.squeeze(np.where(m > 0)))
+
+        xmo = np.square(X[row_idx] - Z[row_idx, non_singletons_idxs] @ V[non_singletons_idxs])
+
+        log_p_old = 0
+        log_p_new = 0
+
+        for d in range(D):
+            if np.isnan(xmo[d]):
+                continue
+
+            log_p_old -= 0.5 * np.log((1 / t_x) + k_old * (1 / t_v))
+            log_p_old -= 0.5 * np.sum(1 / ((1 / t_x) + k_old * (1 / t_v)) * xmo[d])
+
+            log_p_new -= 0.5 * np.log((1 / t_x) + k_new * (1 / t_v))
+            log_p_new -= 0.5 * np.sum(1 / ((1 / t_x) + k_new * (1 / t_v)) * xmo[d])
+
+        if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, 0, 0):
+            non_singletons_idxs = np.atleast_1d(np.squeeze(np.where(m > 0)))
+
+            num_non_singletons = len(non_singletons_idxs)
+
+            K = num_non_singletons + k_new
+
+            Z = np.zeros((N, K), dtype=np.int64)
+
+            Z[:, :num_non_singletons] = model.params.Z[:, non_singletons_idxs]
+
+            Z[row_idx, num_non_singletons:] = 1
+
+            V = np.zeros((K, D))
+
+            V[:num_non_singletons] = model.params.V[non_singletons_idxs]
+
+            if k_new > 0:
+                V[num_non_singletons:] = self._sample_new_V(k_new, model.data, model.params)
+
+            model.params.Z = Z
+
+            model.params.V = V
+
+    def _sample_new_V(self, k, data, params):
+        D = params.D
+        N = params.N
+        V = params.V
+        Z = params.Z
+        t_v = params.tau_v
+        t_x = params.tau_x
+        X = data
+        
+        Z_new = np.zeros((N, k))
+        
+        V_new = np.zeros((k, D))
+        
+        for d in range(D):
+            idxs = ~np.isnan(X[:, d])
+            
+            Z_new_tmp = Z_new[idxs]
+            
+            M = Z_new_tmp.T @ Z_new_tmp + (t_v / t_x) * np.eye(k)
+
+            V_new[:, d] = scipy.stats.multivariate_normal.rvs(
+                scipy.linalg.solve(M, Z_new_tmp.T @ (X[idxs, d] - Z[idxs] @ V[:, d]), assume_a='pos'),
+                (1 / t_x) * scipy.linalg.inv(M)
+            )
+        
+        return V_new         
