@@ -1,12 +1,12 @@
 import itertools
 import numpy as np
 
-from pgfa.math_utils import discrete_rvs, log_normalize
-
+from pgfa.math_utils import discrete_rvs_gumbel_trick, log_normalize
 from pgfa.updates.base import FeatureAllocationMatrixUpdater
 
 
 class RowGibbsUpdater(FeatureAllocationMatrixUpdater):
+
     def __init__(self, max_cols=None, singletons_updater=None):
         self.max_cols = max_cols
 
@@ -23,7 +23,7 @@ class RowGibbsUpdater(FeatureAllocationMatrixUpdater):
 
         update_cols = np.random.choice(cols, replace=False, size=max_cols)
 
-        Zs = np.tile(params.Z[row_idx], (2**max_cols, 1))
+        Zs = np.tile(params.Z[row_idx], (2 ** max_cols, 1))
 
         Zs[:, update_cols] = list(map(np.array, itertools.product([0, 1], repeat=max_cols)))
 
@@ -55,7 +55,7 @@ def do_row_gibbs_update(cols, data, dist, feat_probs, params, row_idx, Zs):
 
     log_p = log_normalize(log_p)
 
-    idx = discrete_rvs(np.exp(log_p))
+    idx = discrete_rvs_gumbel_trick(log_p)
 
     params.Z[row_idx] = Zs[idx]
 
