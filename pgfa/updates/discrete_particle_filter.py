@@ -85,7 +85,11 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
 
         log_p = annealing_factor * dist.log_p_row(data, params, row_idx)
         
-        log_w = prior + log_p - parent_log_p
+        if np.isneginf(log_p) or np.isneginf(parent_log_p):
+            log_w = -np.inf
+        
+        else:
+            log_w = prior + log_p - parent_log_p
 
         return Particle(log_p, log_w, parent, parent_path + [value])
     
