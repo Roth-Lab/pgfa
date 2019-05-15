@@ -102,7 +102,11 @@ class ParticleGibbsUpdater(FeatureAllocationMatrixUpdater):
         if value is None:
             value = discrete_rvs_gumbel_trick(log_q) 
         
-        log_w = log_norm - parent_log_p
+        if np.isneginf(parent_log_p):
+            log_w = -np.inf
+        
+        else:    
+            log_w = log_norm - parent_log_p
         
         return Particle(log_p[value], log_w, parent, parent_path + [value])
 

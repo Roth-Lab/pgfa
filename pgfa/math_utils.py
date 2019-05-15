@@ -65,7 +65,7 @@ def log_sum_exp(log_X):
 
     total = 0
 
-    for x in log_X:
+    for x in log_X:       
         total += np.exp(x - max_exp)
 
     return np.log(total) + max_exp

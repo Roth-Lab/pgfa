@@ -1,13 +1,11 @@
 import numba
 import numpy as np
 import scipy.stats
-import sklearn.metrics
 
 from pgfa.math_utils import bernoulli_rvs
 from pgfa.utils import get_b_cubed_score, Timer
 
 import pgfa.feature_allocation_distributions
-import pgfa.models.lfrm
 import pgfa.updates
 
 
@@ -16,18 +14,18 @@ def main():
     num_particles = 20
     
     data_seed = 0
-    param_seed = 1
-    run_seed = 0
+    param_seed = 0
+    run_seed = 1
     updater = 'dpf'
 
     ibp = False
     time = np.inf
     K = 5
-    N = 100
+    N = 200
 
     set_seed(data_seed)
 
-    data, data_true, params = simulate_data(N, K, alpha=2, prop_missing=0.05, tau=0.1)
+    data, data_true, params = simulate_data(N, K, alpha=1, prop_missing=0.1, tau=0.1)
 
     model_updater = get_model_updater(
         annealing_power=annealing_power, feat_alloc_updater_type=updater, ibp=ibp, mixed_updates=ibp, num_particles=num_particles
@@ -65,7 +63,6 @@ def main():
                 model.log_p,
                 (model.log_p - log_p_true) / abs(log_p_true),
                 compute_error(data_true, model),
-                compute_auc(data_true, model),
                 model.params.tau
             )
 
@@ -159,7 +156,7 @@ def simulate_data(N, K=None, alpha=1, prop_missing=0, tau=1):
     return data, data_true, params
 
 
-# @numba.njit(cache=True)
+@numba.njit(cache=True)
 def sim_data(N, V, Z, prop_missing=0):
     data_true = np.zeros((N, N))
 
@@ -189,20 +186,7 @@ def compute_error(data_true, model):
     if not np.any(idxs):
         return 0
     
-    return np.sum(np.abs(model.predict(method='prob')[idxs] - data_true[idxs]))
-
-
-def compute_auc(data_true, model):
-    idxs = np.isnan(model.data)
-    
-    if not np.any(idxs):
-        return 0
-    
-    label_prob = model.predict(method='prob')[idxs]
-    
-    label_true = data_true[idxs]
-    
-    return sklearn.metrics.roc_auc_score(label_true, label_prob)
+    return np.sum(np.abs(model.predict(method='max')[idxs] - data_true[idxs]))
 
 
 if __name__ == '__main__':

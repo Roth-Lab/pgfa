@@ -101,6 +101,8 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
             y[y >= 0] = 0
             return log_sum_exp(y)
         
+        log_W[np.isneginf(log_W)] = -1e10
+        
         log_l = scipy.optimize.bisect(lambda x:f(x) - np.log(self.max_particles), log_W.min(), 1000)
         
         new_swarm = ParticleSwarm()

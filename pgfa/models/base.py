@@ -1,7 +1,10 @@
+import numpy as np
+
 import pgfa.feature_allocation_distributions
 
 
 class AbstractModel(object):
+
     @staticmethod
     def get_default_params(data, feat_alloc_dist):
         raise NotImplementedError
@@ -39,6 +42,7 @@ class AbstractModel(object):
 
 
 class AbstractModelUpdater(object):
+
     def _update_model_params(self, model):
         """ Update the model specific parameters.
         """
@@ -61,19 +65,41 @@ class AbstractModelUpdater(object):
 
 
 class AbstractDataDistribution(object):
-    def log_p(self, data, params):
+
+    def __init__(self, annealing_power=1.0):
+        self.annealing_power = annealing_power
+
+    def _log_p(self, data, params):
+        raise NotImplementedError
+    
+    def _log_p_row(self, data, params, row_idx):
         raise NotImplementedError
 
+    def log_p(self, data, params):
+        return self._anneal_log_p(self._log_p(data, params))
+        
     def log_p_row(self, data, params, row_idx):
-        raise NotImplementedError
+        return self._anneal_log_p(self._log_p_row(data, params, row_idx))
+    
+    def _anneal_log_p(self, log_p):
+        if np.isneginf(log_p):
+            if self.annealing_power < 1.0:
+                log_p = -self.annealing_power * 1e100
+        
+        else:
+            log_p *= self.annealing_power        
+        
+        return log_p
 
 
 class AbstractParametersDistribution(object):
+        
     def log_p(self, params):
         raise NotImplementedError
 
 
 class AbstractParameters(object):
+
     @property
     def param_shapes(self):
         raise NotImplementedError
@@ -101,12 +127,29 @@ class AbstractParameters(object):
 
 
 class JointDistribution(object):
-    def __init__(self, data_dist, feat_alloc_dist, params_dist):
+
+    def __init__(self, data_dist, feat_alloc_dist, params_dist, annealing_power=1.0):
         self.data_dist = data_dist
 
         self.feat_alloc_dist = feat_alloc_dist
 
         self.params_dist = params_dist
+        
+        self.annealing_power = annealing_power
+        
+    @property
+    def annealing_power(self):
+        return self._annealing_power
+    
+    @annealing_power.setter
+    def annealing_power(self, value):
+        self.data_dist.annealing_power = value
+        
+        self.feat_alloc_dist.annealing_power = value
+        
+        self.params_dist.annealing_power = value
+        
+        self._annealing_power = value
 
     def log_p(self, data, params):
         log_p = 0

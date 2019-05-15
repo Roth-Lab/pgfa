@@ -1,14 +1,14 @@
 import numba
 import numpy as np
 import scipy.stats
-import sklearn.metrics
 
-from pgfa.math_utils import bernoulli_rvs
-from pgfa.utils import get_b_cubed_score, Timer
+from pgfa.utils import get_b_cubed_score
 
 import pgfa.feature_allocation_distributions
-import pgfa.models.lfrm
+import pgfa.models.mutation_signatures
 import pgfa.updates
+
+from pgfa.utils import Timer
 
 
 def main():
@@ -18,16 +18,17 @@ def main():
     data_seed = 0
     param_seed = 1
     run_seed = 0
-    updater = 'dpf'
+    updater = 'g'
 
     ibp = False
     time = np.inf
     K = 5
-    N = 100
+    N = 20
+    D = 100
 
     set_seed(data_seed)
 
-    data, data_true, params = simulate_data(N, K, alpha=2, prop_missing=0.05, tau=0.1)
+    data, params = simulate_data(N, D=D, K=K, alpha=2)
 
     model_updater = get_model_updater(
         annealing_power=annealing_power, feat_alloc_updater_type=updater, ibp=ibp, mixed_updates=ibp, num_particles=num_particles
@@ -45,9 +46,12 @@ def main():
 
     print(np.sum(params.Z, axis=0))
     print(log_p_true)
-    print(compute_error(data_true, model))
 
     model.params = old_params.copy()
+    
+    model.params.S = params.S.copy()
+    
+    model.params.V = params.V.copy()
 
     print('@' * 100)
     
@@ -58,15 +62,12 @@ def main():
     i = 0
 
     while timer.elapsed < time:
-        if i % 10 == 0:
+        if i % 1 == 0:
             print(
                 i,
                 model.params.K,
                 model.log_p,
-                (model.log_p - log_p_true) / abs(log_p_true),
-                compute_error(data_true, model),
-                compute_auc(data_true, model),
-                model.params.tau
+                (model.log_p - log_p_true) / abs(log_p_true)
             )
 
             print(get_b_cubed_score(params.Z, model.params.Z))
@@ -76,12 +77,14 @@ def main():
                 model.feat_alloc_dist.log_p(model.params),
                 model.params_dist.log_p(model.params)
             )
+            
+            print(np.sum(model.params.Z, axis=0))
 
             print('#' * 100)
 
         timer.start()
 
-        model_updater.update(model)
+        model_updater.update(model, param_updates=0)
 
         timer.stop()
 
@@ -91,19 +94,15 @@ def main():
 def get_model(data, ibp=False, K=None):
     if ibp:
         feat_alloc_dist = pgfa.feature_allocation_distributions.IndianBuffetProcessDistribution()
-
+    
     else:
         feat_alloc_dist = pgfa.feature_allocation_distributions.BetaBernoulliFeatureAllocationDistribution(K)
 
-    return pgfa.models.lfrm.Model(data, feat_alloc_dist, symmetric=False)
+    return pgfa.models.mutation_signatures.Model(data, feat_alloc_dist)
 
 
 def get_model_updater(feat_alloc_updater_type='g', annealing_power=0, ibp=True, mixed_updates=False, num_particles=20):
-    if ibp:
-        singletons_updater = pgfa.models.lfrm.PriorSingletonsUpdater()
-
-    else:
-        singletons_updater = None
+    singletons_updater = None
 
     if feat_alloc_updater_type == 'dpf':
         feat_alloc_updater = pgfa.updates.DicreteParticleFilterUpdater(
@@ -129,7 +128,7 @@ def get_model_updater(feat_alloc_updater_type='g', annealing_power=0, ibp=True, 
     if mixed_updates:
         feat_alloc_updater = pgfa.updates.GibbsMixtureUpdater(feat_alloc_updater)
 
-    return pgfa.models.lfrm.ModelUpdater(feat_alloc_updater)
+    return pgfa.models.mutation_signatures.ModelUpdater(feat_alloc_updater)
 
 
 def set_seed(seed):
@@ -143,66 +142,33 @@ def set_numba_seed(seed):
     np.random.seed(seed)
 
 
-def simulate_data(N, K=None, alpha=1, prop_missing=0, tau=1):
+def simulate_data(N, D=1, K=None, alpha=1):
     feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K=K)
 
     Z = feat_alloc_dist.rvs(alpha, N)
+    
+    Z[:, 0] = 1
 
     K = Z.shape[1]
+        
+    Z = np.random.randint(0, 2, size=(N, K))
 
-    V = scipy.stats.norm.rvs(0, 1 / np.sqrt(tau), size=(K, K))
+    S = scipy.stats.dirichlet.rvs(np.ones(D), size=K)
 
-    params = pgfa.models.lfrm.Parameters(alpha, np.ones(2), tau, np.ones(2), V, Z)
+    V = scipy.stats.gamma.rvs(1, 1, size=(N, K))
     
-    data, data_true = sim_data(N, V, Z.astype(np.float64), prop_missing)
-
-    return data, data_true, params
-
-
-# @numba.njit(cache=True)
-def sim_data(N, V, Z, prop_missing=0):
-    data_true = np.zeros((N, N))
-
-    for i in range(N):
-        for j in range(N):
-            m = Z[i].T @ V @ Z[j]
-
-            f = np.exp(-m)
-
-            p = 1 / (1 + f)
-
-            data_true[i, j] = bernoulli_rvs(p)
+    params = pgfa.models.mutation_signatures.Parameters(alpha, np.ones(2), S, np.ones(D), V, np.ones(2), Z)
     
-    data = data_true.copy()
+    pi = params.pi
 
-    for i in range(N):
-        for j in range(N):
-            if np.random.random() < prop_missing:
-                data[i, j] = np.nan    
+    data = np.zeros((N, D))
     
-    return data, data_true
+    for n in range(N):
+        num_mutations = np.random.poisson(1000)
+        
+        data[n] = scipy.stats.multinomial.rvs(num_mutations, pi[n])
 
-
-def compute_error(data_true, model):
-    idxs = np.isnan(model.data)
-    
-    if not np.any(idxs):
-        return 0
-    
-    return np.sum(np.abs(model.predict(method='prob')[idxs] - data_true[idxs]))
-
-
-def compute_auc(data_true, model):
-    idxs = np.isnan(model.data)
-    
-    if not np.any(idxs):
-        return 0
-    
-    label_prob = model.predict(method='prob')[idxs]
-    
-    label_true = data_true[idxs]
-    
-    return sklearn.metrics.roc_auc_score(label_true, label_prob)
+    return data, params
 
 
 if __name__ == '__main__':
