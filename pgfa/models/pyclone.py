@@ -8,66 +8,6 @@ from pgfa.math_utils import do_metropolis_hastings_accept_reject, log_beta, log_
 import pgfa.models.base
 
 
-def get_data_point(a, b, cn_major, cn_minor, cn_normal=2, error_rate=1e-3, tumour_content=None):
-    cn_total = cn_major + cn_minor
-
-    cn = []
-
-    mu = []
-
-    log_pi = []
-
-    # Consider all possible mutational genotypes consistent with mutation before CN change
-    for x in range(1, cn_major + 1):
-        cn.append((cn_normal, cn_normal, cn_total))
-
-        mu.append((error_rate, error_rate, min(1 - error_rate, x / cn_total)))
-
-        log_pi.append(0)
-
-    # Consider mutational genotype of mutation before CN change if not already added
-    mutation_after_cn = (cn_normal, cn_total, cn_total)
-
-    if mutation_after_cn not in cn:
-        cn.append(mutation_after_cn)
-
-        mu.append((error_rate, error_rate, min(1 - error_rate, 1 / cn_total)))
-
-        log_pi.append(0)
-
-        assert len(set(cn)) == 2
-    
-    cn = np.array(cn, dtype=np.int)
-    
-    mu = np.array(mu, dtype=np.float)
-    
-    log_pi = log_normalize(np.array(log_pi, dtype=np.float64))
-    
-    if tumour_content is None:
-        tumour_content = np.ones(len(a))
-        
-    return DataPoint(np.array(a), np.array(b), cn, mu, log_pi, np.array(tumour_content))
-
-
-@numba.jitclass([
-    ('b', numba.int64[:]),
-    ('d', numba.int64[:]),
-    ('cn', numba.int64[:, :]),
-    ('mu', numba.float64[:, :]),
-    ('log_pi', numba.float64[:]),
-    ('tumour_content', numba.float64[:])
-])
-class DataPoint(object):
-
-    def __init__(self, a, b, cn, mu, log_pi, tumour_content=1.0):
-        self.b = b
-        self.d = a + b
-        self.cn = cn
-        self.mu = mu
-        self.log_pi = log_pi
-        self.tumour_content = tumour_content
-
-
 class Model(pgfa.models.base.AbstractModel):
 
     @staticmethod
@@ -80,11 +20,13 @@ class Model(pgfa.models.base.AbstractModel):
 
         K = Z.shape[1]
         
-        precision = scipy.stats.gamma.rvs(1e-2, 1e2)
+        precision_prior = np.array(_get_gamma_params(400, 1000))
+        
+        precision = scipy.stats.gamma.rvs(precision_prior[0], scale=(1 / precision_prior[1]))
                 
         V = scipy.stats.gamma.rvs(100, 1, size=(K, D))
         
-        return Parameters(1, np.ones(2), precision, np.array([1e-2, 1e-2]), V, np.array([100, 1]), Z)
+        return Parameters(1, np.ones(2), precision, precision_prior, V, np.array([100, 1]), Z)
 
     def _init_joint_dist(self, feat_alloc_dist):
         self.joint_dist = pgfa.models.base.JointDistribution(
@@ -97,12 +39,12 @@ class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
     def _update_model_params(self, model):
         for _ in range(20):
             update_precision(model)
-            
+             
         for _ in range(4):            
             f = np.random.choice([update_V_perm, update_V_block, update_V_block_dim])
-            
+             
             f(model)
-            
+             
         for _ in range(20):
             update_V_random_grid_pairwise(model, num_points=5)
 
@@ -881,6 +823,66 @@ class SplitMergeUpdater(object):
         log_q -= np.log(np.sum(Z[j]))
         
         return np.array([k_a, k_b]), log_q
+
+
+def get_data_point(a, b, cn_major, cn_minor, cn_normal=2, error_rate=1e-3, tumour_content=None):
+    cn_total = cn_major + cn_minor
+
+    cn = []
+
+    mu = []
+
+    log_pi = []
+
+    # Consider all possible mutational genotypes consistent with mutation before CN change
+    for x in range(1, cn_major + 1):
+        cn.append((cn_normal, cn_normal, cn_total))
+
+        mu.append((error_rate, error_rate, min(1 - error_rate, x / cn_total)))
+
+        log_pi.append(0)
+
+    # Consider mutational genotype of mutation before CN change if not already added
+    mutation_after_cn = (cn_normal, cn_total, cn_total)
+
+    if mutation_after_cn not in cn:
+        cn.append(mutation_after_cn)
+
+        mu.append((error_rate, error_rate, min(1 - error_rate, 1 / cn_total)))
+
+        log_pi.append(0)
+
+        assert len(set(cn)) == 2
+    
+    cn = np.array(cn, dtype=np.int)
+    
+    mu = np.array(mu, dtype=np.float)
+    
+    log_pi = log_normalize(np.array(log_pi, dtype=np.float64))
+    
+    if tumour_content is None:
+        tumour_content = np.ones(len(a))
+        
+    return DataPoint(np.array(a), np.array(b), cn, mu, log_pi, np.array(tumour_content))
+
+
+@numba.jitclass([
+    ('b', numba.int64[:]),
+    ('d', numba.int64[:]),
+    ('cn', numba.int64[:, :]),
+    ('mu', numba.float64[:, :]),
+    ('log_pi', numba.float64[:]),
+    ('tumour_content', numba.float64[:])
+])
+class DataPoint(object):
+
+    def __init__(self, a, b, cn, mu, log_pi, tumour_content=1.0):
+        self.b = b
+        self.d = a + b
+        self.cn = cn
+        self.mu = mu
+        self.log_pi = log_pi
+        self.tumour_content = tumour_content
 
 
 @numba.njit(cache=False)

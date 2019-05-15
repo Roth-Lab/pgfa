@@ -14,33 +14,35 @@ from pgfa.utils import Timer
 
 
 def main(num_iters=100000):
-    seed = 3
+    seed = 0
 
     set_seed(seed)
 
-    ibp = True
+    ibp = False
     time = 100000
-    K = 4
+    K = 10
     
     data, Z_true, mutations = load_data()
     
-#     idxs = np.random.choice(len(data), 20, replace=False)
-#     
+#     idxs = np.random.choice(len(data), 50, replace=False)
+#      
 #     data = [data[i] for i in idxs]
-#     
+#      
 #     Z_true = Z_true[idxs]
-#     
+     
     model_updater = get_model_updater(
         feat_alloc_updater_type='dpf', ibp=ibp, mixed_updates=False
     )
 
     model = get_model(data, ibp=ibp, K=K)
     
-#     model.params.alpha_prior = np.array([1e-1, 1])
+    model.params.alpha = 1e-3
     
-#     model.params.V_prior = np.array([1e-2, 1])
-    
+#     model.params.V_prior = np.array([1e4, 1])
+
     annealing_ladder = np.array([1.0])
+    
+#     annealing_ladder = np.linspace(0, 1, 20)
     
     annealing_idx = 0
     
@@ -53,11 +55,11 @@ def main(num_iters=100000):
     i = 0
 
     while timer.elapsed < time:
-        if i % 50 == 0:
+        if i % 20 == 0:
             if annealing_idx < len(annealing_ladder):
-#                 model.data_dist.annealing_power = annealing_ladder[annealing_idx]
+                model.data_dist.annealing_power = annealing_ladder[annealing_idx]
                 
-                sm_updater.annealing_factor = annealing_ladder[annealing_idx]
+#                 sm_updater.annealing_factor = annealing_ladder[annealing_idx]
                 
                 print('Setting annealing power to: {}'.format(annealing_ladder[annealing_idx]))
                 
@@ -90,10 +92,10 @@ def main(num_iters=100000):
 
         timer.start()
 
-        model_updater.update(model, alpha_updates=20)
+        model_updater.update(model, alpha_updates=0)
         
 #         if ibp:
-#             for _ in range(20):
+#             for _ in range(1):
 #                 sm_updater.update(model)
 
         timer.stop()
