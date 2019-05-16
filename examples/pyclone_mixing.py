@@ -19,7 +19,7 @@ def main():
     ibp = True
     time = 100000
     K = 10
-    updater = 'dpf'
+    updater = 'g'
     num_split_merge_updates = 10
     
     if not ibp:
@@ -69,7 +69,7 @@ def main():
 
         timer.start()
 
-        model_updater.update(model, alpha_updates=0)
+        model_updater.update(model)
         
         for _ in range(num_split_merge_updates):
             sm_updater.update(model)
