@@ -17,20 +17,20 @@ def main():
     annealing_power = 1.0
     num_particles = 20
     
-    data_seed = 0
-    param_seed = 0
-    run_seed = 1
+    data_seed = 1
+    param_seed = 1
+    run_seed = 0
     updater = 'dpf'
 
     set_seed(data_seed)
 
-    ibp = True
+    ibp = False
     time = np.inf
     D = 10
     K = 20
     N = 1000
 
-    data, data_true, params = simulate_data(D, N, K=K, alpha=2, prop_missing=0.1, tau_v=0.25, tau_x=25)
+    data, data_true, params = simulate_data(D, N, K=K, alpha=2, prop_missing=0.00, tau_v=0.25, tau_x=25)
 
     for d in range(D):
         assert not np.all(np.isnan(data[:, d]))
@@ -39,7 +39,7 @@ def main():
         assert not np.all(np.isnan(data[n]))
 
     model_updater = get_model_updater(
-        annealing_power=annealing_power, feat_alloc_updater_type=updater, ibp=ibp, mixed_updates=ibp, num_particles=num_particles
+        annealing_power=annealing_power, feat_alloc_updater_type=updater, ibp=ibp, mixed_updates=False, num_particles=num_particles
     )
 
     set_seed(param_seed)
@@ -63,9 +63,6 @@ def main():
 #     model.params.Z = params.Z.copy()
 # 
 #     model.params.alpha = params.alpha
-#     model.params.Z = np.random.randint(0, 2, size=(N, 1))
-#     
-#     model.params.V = model.params.V[[0]]
 
     print(log_p_true)
 
@@ -149,9 +146,7 @@ def get_model(data, ibp=False, K=None):
 
 def get_model_updater(feat_alloc_updater_type='g', annealing_power=0, ibp=True, mixed_updates=False, num_particles=20):
     if ibp:
-        singletons_updater = pgfa.models.linear_gaussian.CollapsedSingletonsUpdater()
-        
-#         singletons_updater = pgfa.models.linear_gaussian.PriorSingletonsUpdater()
+        singletons_updater = pgfa.models.linear_gaussian.PriorSingletonsUpdater()
 
     else:
         singletons_updater = None
@@ -218,7 +213,7 @@ def simulate_data(D, N, K=None, alpha=1, prop_missing=0, tau_v=1, tau_x=1):
 def compute_l2_error(data, data_true, params):
     idxs = np.isnan(data)
     
-    if not np.any(idxs):
+    if not np.all(idxs):
         return 0
 
     data_pred = params.Z @ params.V

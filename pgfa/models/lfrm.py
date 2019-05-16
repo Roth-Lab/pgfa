@@ -48,7 +48,7 @@ class Model(pgfa.models.base.AbstractModel):
 
         for i in range(self.params.N):
             for j in range(self.params.N):
-                m = Z[i] @ V @ Z[j].T
+                m = Z[i].T @ V @ Z[j]
 
                 r = np.exp(-m)
 

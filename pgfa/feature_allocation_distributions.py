@@ -51,7 +51,7 @@ class BetaBernoulliFeatureAllocationDistribution(object):
         np.random.shuffle(cols)
 
         return cols
-    
+
     def log_p(self, params):
         alpha = params.alpha
         Z = params.Z
@@ -117,7 +117,7 @@ class IndianBuffetProcessDistribution(object):
         np.random.shuffle(cols)
 
         return cols
-    
+
     def log_p(self, params):
         alpha = params.alpha
         Z = params.Z

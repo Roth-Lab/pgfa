@@ -1,7 +1,6 @@
 import numba
 import numpy as np
 import scipy.stats
-import sklearn.metrics
 
 from pgfa.math_utils import bernoulli_rvs
 from pgfa.utils import get_b_cubed_score, Timer
@@ -12,30 +11,28 @@ import pgfa.updates
 
 
 def main():
-    annealing_power = 1.0
-    num_particles = 20
-    
-    data_seed = 0
-    param_seed = 1
-    run_seed = 0
-    updater = 'dpf'
+    seed = 2
+
+    set_seed(seed)
 
     ibp = False
-    time = np.inf
-    K = 5
+    time = 1000
+    updater = 'rg'
+    updater_mixed = False
     N = 100
+    K = 5
 
-    set_seed(data_seed)
-
-    data, data_true, params = simulate_data(N, K, alpha=2, prop_missing=0.05, tau=0.1)
+    data, data_true, params = simulate_data(N, K, alpha=2, prop_missing=0, tau=0.1)
 
     model_updater = get_model_updater(
-        annealing_power=annealing_power, feat_alloc_updater_type=updater, ibp=ibp, mixed_updates=ibp, num_particles=num_particles
+        feat_alloc_updater_type=updater, ibp=ibp, mixed_updates=updater_mixed
     )
 
-    set_seed(param_seed)
-
     model = get_model(data, ibp=ibp, K=K)
+
+    print(np.sum(params.Z, axis=0))
+
+    print('@' * 100)
 
     old_params = model.params.copy()
 
@@ -43,15 +40,9 @@ def main():
 
     log_p_true = model.log_p
 
-    print(np.sum(params.Z, axis=0))
-    print(log_p_true)
-    print(compute_error(data_true, model))
-
     model.params = old_params.copy()
 
-    print('@' * 100)
-    
-    set_seed(run_seed)
+    print(log_p_true)
 
     timer = Timer()
 
@@ -64,8 +55,7 @@ def main():
                 model.params.K,
                 model.log_p,
                 (model.log_p - log_p_true) / abs(log_p_true),
-                compute_error(data_true, model),
-                compute_auc(data_true, model),
+                np.sum(np.abs(model.predict(method='max') - data_true)),
                 model.params.tau
             )
 
@@ -98,29 +88,24 @@ def get_model(data, ibp=False, K=None):
     return pgfa.models.lfrm.Model(data, feat_alloc_dist, symmetric=False)
 
 
-def get_model_updater(feat_alloc_updater_type='g', annealing_power=0, ibp=True, mixed_updates=False, num_particles=20):
+def get_model_updater(feat_alloc_updater_type='g', ibp=True, mixed_updates=False):
     if ibp:
-        singletons_updater = pgfa.models.lfrm.PriorSingletonsUpdater()
+        singletons_updater = pgfa.models.nsfa.CollapsedSingletonsUpdater()
 
     else:
         singletons_updater = None
 
-    if feat_alloc_updater_type == 'dpf':
-        feat_alloc_updater = pgfa.updates.DicreteParticleFilterUpdater(
-            annealing_power=annealing_power, max_particles=num_particles, singletons_updater=singletons_updater
-        )
-
-    elif feat_alloc_updater_type == 'g':
+    if feat_alloc_updater_type == 'g':
         feat_alloc_updater = pgfa.updates.GibbsUpdater(singletons_updater=singletons_updater)
-        
-    elif feat_alloc_updater_type == 'gpf':
-        feat_alloc_updater = pgfa.updates.GumbelParticleFilterUpdater(
-            annealing_power=annealing_power, max_particles=num_particles
-            )
 
     elif feat_alloc_updater_type == 'pg':
         feat_alloc_updater = pgfa.updates.ParticleGibbsUpdater(
-            annealing_power=annealing_power, num_particles=num_particles, singletons_updater=singletons_updater
+            annealed=False, num_particles=20, singletons_updater=singletons_updater
+        )
+
+    elif feat_alloc_updater_type == 'pga':
+        feat_alloc_updater = pgfa.updates.ParticleGibbsUpdater(
+            annealed=True, num_particles=20, singletons_updater=singletons_updater
         )
 
     elif feat_alloc_updater_type == 'rg':
@@ -153,14 +138,7 @@ def simulate_data(N, K=None, alpha=1, prop_missing=0, tau=1):
     V = scipy.stats.norm.rvs(0, 1 / np.sqrt(tau), size=(K, K))
 
     params = pgfa.models.lfrm.Parameters(alpha, np.ones(2), tau, np.ones(2), V, Z)
-    
-    data, data_true = sim_data(N, V, Z.astype(np.float64), prop_missing)
 
-    return data, data_true, params
-
-
-# @numba.njit(cache=True)
-def sim_data(N, V, Z, prop_missing=0):
     data_true = np.zeros((N, N))
 
     for i in range(N):
@@ -172,37 +150,15 @@ def sim_data(N, V, Z, prop_missing=0):
             p = 1 / (1 + f)
 
             data_true[i, j] = bernoulli_rvs(p)
-    
+
     data = data_true.copy()
 
     for i in range(N):
         for j in range(N):
             if np.random.random() < prop_missing:
-                data[i, j] = np.nan    
-    
-    return data, data_true
+                data[i, j] = np.nan
 
-
-def compute_error(data_true, model):
-    idxs = np.isnan(model.data)
-    
-    if not np.any(idxs):
-        return 0
-    
-    return np.sum(np.abs(model.predict(method='prob')[idxs] - data_true[idxs]))
-
-
-def compute_auc(data_true, model):
-    idxs = np.isnan(model.data)
-    
-    if not np.any(idxs):
-        return 0
-    
-    label_prob = model.predict(method='prob')[idxs]
-    
-    label_true = data_true[idxs]
-    
-    return sklearn.metrics.roc_auc_score(label_true, label_prob)
+    return data, data_true, params
 
 
 if __name__ == '__main__':
