@@ -1,8 +1,6 @@
 import numba
 import numpy as np
 import pandas as pd
-import scipy.stats
-import scipy.spatial.distance
 
 from pgfa.utils import get_b_cubed_score
 
@@ -13,40 +11,29 @@ import pgfa.updates
 from pgfa.utils import Timer
 
 
-def main(num_iters=100000):
+def main():
     seed = 0
 
     set_seed(seed)
 
-    ibp = False
+    ibp = True
     time = 100000
     K = 10
+    updater = 'dpf'
+    num_split_merge_updates = 10
     
-    data, Z_true, mutations = load_data()
+    if not ibp:
+        num_split_merge_updates = 0
     
-#     idxs = np.random.choice(len(data), 50, replace=False)
-#      
-#     data = [data[i] for i in idxs]
-#      
-#     Z_true = Z_true[idxs]
-     
+    data, Z_true, _ = load_data()
+
     model_updater = get_model_updater(
-        feat_alloc_updater_type='dpf', ibp=ibp, mixed_updates=False
+        feat_alloc_updater_type=updater, ibp=ibp, mixed_updates=False
     )
-
-    model = get_model(data, ibp=ibp, K=K)
-    
-    model.params.alpha = 1e-3
-    
-#     model.params.V_prior = np.array([1e4, 1])
-
-    annealing_ladder = np.array([1.0])
-    
-#     annealing_ladder = np.linspace(0, 1, 20)
-    
-    annealing_idx = 0
     
     sm_updater = pgfa.models.pyclone.SplitMergeUpdater()
+
+    model = get_model(data, ibp=ibp, K=K)
 
     print('@' * 100)
 
@@ -55,16 +42,6 @@ def main(num_iters=100000):
     i = 0
 
     while timer.elapsed < time:
-        if i % 20 == 0:
-            if annealing_idx < len(annealing_ladder):
-                model.data_dist.annealing_power = annealing_ladder[annealing_idx]
-                
-#                 sm_updater.annealing_factor = annealing_ladder[annealing_idx]
-                
-                print('Setting annealing power to: {}'.format(annealing_ladder[annealing_idx]))
-                
-                annealing_idx += 1
-            
         if i % 1 == 0:
             print(
                 i,
@@ -94,16 +71,12 @@ def main(num_iters=100000):
 
         model_updater.update(model, alpha_updates=0)
         
-#         if ibp:
-#             for _ in range(1):
-#                 sm_updater.update(model)
+        for _ in range(num_split_merge_updates):
+            sm_updater.update(model)
 
         timer.stop()
 
         i += 1
-        
-        if i >= num_iters:
-            break
 
 
 def set_seed(seed):
@@ -162,7 +135,7 @@ def get_model_updater(feat_alloc_updater_type='g', annealing_power=0, ibp=True, 
 
 
 def load_data():
-    file_name = 'data/pyclone/mixing_full.tsv'
+    file_name = 'data/pyclone/mixing.tsv'
     
     df = pd.read_csv(file_name, sep='\t')
     
@@ -202,16 +175,5 @@ def load_data():
 
 
 if __name__ == '__main__':
-    main(num_iters=np.inf)
-    
-#     import line_profiler
-#   
-#     profiler = line_profiler.LineProfiler()
-#   
-#     profiler.add_function(pgfa.models.pyclone.ModelUpdater.update)
-#     
-#     profiler.add_function(pgfa.models.pyclone.DataDistribution._log_p)
-#   
-#     profiler.run('main(num_iters=100)')
-#       
-#     profiler.print_stats()
+    main()
+

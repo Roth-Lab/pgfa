@@ -422,10 +422,10 @@ def _get_gamma_params(mean, variance):
 #=========================================================================
 class DataDistribution(pgfa.models.base.AbstractDataDistribution):
 
-    def _log_p(self, data, params):
+    def log_p(self, data, params):
         return _log_p(data, params.precision, params.F, params.Z.astype(float))
 
-    def _log_p_row(self, data, params, row_idx):
+    def log_p_row(self, data, params, row_idx):
         return _log_p_row(data[row_idx], params.precision, params.F, params.Z[row_idx].astype(float))
 
 
