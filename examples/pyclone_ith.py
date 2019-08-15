@@ -12,20 +12,20 @@ from pgfa.utils import Timer
 
 
 def main():
-    seed = 9
+    seed = 2
 
     set_seed(seed)
 
-    ibp = False
+    ibp = True
     time = 100000
-    K = 4
-    updater = 'dpf'
+    K = 6
+    updater = 'g'
     num_split_merge_updates = 0
     
     if not ibp:
         num_split_merge_updates = 0
     
-    data, Z_true, _ = load_data()
+    data, Z_true, mutations, samples = load_data()
 
     model_updater = get_model_updater(
         feat_alloc_updater_type=updater, ibp=ibp, mixed_updates=False
@@ -50,9 +50,11 @@ def main():
                 model.params.precision,
                 model.log_p,
             )
+            
+            Z = np.column_stack([model.params.Z[d] for d, m in enumerate(mutations) if m in Z_true.columns])
 
             print(
-                get_b_cubed_score(Z_true, model.params.Z)
+                get_b_cubed_score(Z_true.values, Z)
             )
 
             print(
@@ -62,6 +64,8 @@ def main():
             )
             
             print(model.params.Z.sum(axis=0))
+            
+            print(samples)
             
             print(np.around(model.params.F, 3)[np.sum(model.params.Z, axis=0) > 0])
 
@@ -135,18 +139,34 @@ def get_model_updater(feat_alloc_updater_type='g', annealing_power=0, ibp=True, 
 
 
 def load_data():
-    file_name = 'data/pyclone/mixing.tsv'
+    
+    file_name = 'data/pyclone/ith_sc_genotypes.tsv'
+    
+    geno_df = pd.read_csv(file_name, sep='\t')
+    
+    file_name = 'data/pyclone/ith_sc_prev.tsv'
+    
+    prev_df = pd.read_csv(file_name, sep='\t')
+    
+    prev_df = prev_df.groupby('cluster').filter(lambda x: x['mean_posterior_prevalence'].max() >= 0.1)
+
+    clusters = prev_df['cluster'].unique()
+    
+    geno_df = geno_df.set_index('cluster').loc[clusters].reset_index()
+    
+    geno_df = geno_df.drop('cluster', axis=1)
+    
+    geno_df = (geno_df > 0).astype(int)
+    
+    file_name = 'data/pyclone/ith_tumour_content.tsv' 
+    
+    tc = pd.read_csv(file_name, sep='\t')
+    
+    tc = tc.set_index('sample_id')['tumour_content']
+    
+    file_name = 'data/pyclone/ith.tsv'
     
     df = pd.read_csv(file_name, sep='\t')
-    
-    Z = []
-    
-    cases = set()
-    
-    for x in df['variant_cases'].unique():
-        cases.update(set(x.split(',')))
-    
-    cases = sorted(cases)
     
     data = []
     
@@ -160,28 +180,25 @@ def load_data():
         sample_data_points = []
         
         mut_df = mut_df.set_index('sample_id')
-
+        
         for sample in samples:
             row = mut_df.loc[sample]
          
             sample_data_points.append(
                 pgfa.models.pyclone.get_sample_data_point(
-                    row['a'], row['b'], row['cn_major'], row['cn_minor']
+                    row['a'], row['b'], row['cn_major'], row['cn_minor'], tumour_content=tc.loc[sample]
                 )
             )
-                    
+        
         data.append(pgfa.models.pyclone.DataPoint(sample_data_points))
-        
-        Z_mut = np.zeros(4)
-        
-        for case in mut_df['variant_cases'].iloc[0].split(','):
-            Z_mut[cases.index(case)] = 1
-        
-        Z.append(Z_mut)
     
-    Z = np.array(Z, dtype=np.int8)
+    geno_df = geno_df[[x for x in mutations if x in geno_df.columns]]
     
-    return data, Z, mutations
+    geno_df = geno_df[geno_df.sum(axis=1) > 0]
+    
+    print('Genotypes dim: {}'.format(geno_df.shape))
+    
+    return data, geno_df, mutations, samples
 
 
 if __name__ == '__main__':

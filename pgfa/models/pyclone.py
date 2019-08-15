@@ -14,7 +14,7 @@ class Model(pgfa.models.base.AbstractModel):
     def get_default_params(data, feat_alloc_dist):
         N = len(data)
         
-        D = len(data[0].d)
+        D = len(data[0].sample_data_points)
 
         Z = feat_alloc_dist.rvs(1, N)
 
@@ -23,10 +23,12 @@ class Model(pgfa.models.base.AbstractModel):
         precision_prior = np.array(_get_gamma_params(400, 1000))
         
         precision = scipy.stats.gamma.rvs(precision_prior[0], scale=(1 / precision_prior[1]))
-                
-        V = scipy.stats.gamma.rvs(100, 1, size=(K, D))
         
-        return Parameters(1, np.ones(2), precision, precision_prior, V, np.array([100, 1]), Z)
+        V_prior = _get_gamma_params(100, 100)
+        
+        V = scipy.stats.gamma.rvs(V_prior[0], scale=(1 / V_prior[1]), size=(K, D))
+        
+        return Parameters(1, np.ones(2), precision, precision_prior, V, V_prior, Z)
 
     def _init_joint_dist(self, feat_alloc_dist):
         self.joint_dist = pgfa.models.base.JointDistribution(
@@ -41,7 +43,7 @@ class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
             update_precision(model)
              
         for _ in range(4):            
-            f = np.random.choice([update_V_perm, update_V_block, update_V_block_dim])
+            f = np.random.choice([update_V_perm, update_V_block, update_V_block_dim, update_V_perm])
              
             f(model)
              
@@ -825,7 +827,7 @@ class SplitMergeUpdater(object):
         return np.array([k_a, k_b]), log_q
 
 
-def get_data_point(a, b, cn_major, cn_minor, cn_normal=2, error_rate=1e-3, tumour_content=None):
+def get_sample_data_point(a, b, cn_major, cn_minor, cn_normal=2, error_rate=1e-3, tumour_content=1.0):
     cn_total = cn_major + cn_minor
 
     cn = []
@@ -851,30 +853,31 @@ def get_data_point(a, b, cn_major, cn_minor, cn_normal=2, error_rate=1e-3, tumou
         mu.append((error_rate, error_rate, min(1 - error_rate, 1 / cn_total)))
 
         log_pi.append(0)
-
-        assert len(set(cn)) == 2
     
     cn = np.array(cn, dtype=np.int)
     
     mu = np.array(mu, dtype=np.float)
     
     log_pi = log_normalize(np.array(log_pi, dtype=np.float64))
-    
-    if tumour_content is None:
-        tumour_content = np.ones(len(a))
-        
-    return DataPoint(np.array(a), np.array(b), cn, mu, log_pi, np.array(tumour_content))
+
+    return SampleDataPoint(int(a), int(b), cn, mu, log_pi, tumour_content)
+
+
+class DataPoint(object):
+
+    def __init__(self, sample_data_points):
+        self.sample_data_points = sample_data_points
 
 
 @numba.jitclass([
-    ('b', numba.int64[:]),
-    ('d', numba.int64[:]),
+    ('b', numba.int64),
+    ('d', numba.int64),
     ('cn', numba.int64[:, :]),
     ('mu', numba.float64[:, :]),
     ('log_pi', numba.float64[:]),
-    ('tumour_content', numba.float64[:])
+    ('tumour_content', numba.float64)
 ])
-class DataPoint(object):
+class SampleDataPoint(object):
 
     def __init__(self, a, b, cn, mu, log_pi, tumour_content=1.0):
         self.b = b
@@ -885,7 +888,6 @@ class DataPoint(object):
         self.tumour_content = tumour_content
 
 
-@numba.njit(cache=False)
 def _log_p(X, precision, F, Z):
     N = len(X)
     
@@ -897,40 +899,44 @@ def _log_p(X, precision, F, Z):
     return log_p
 
 
-@numba.njit(cache=False)        
 def _log_p_row(x, precision, F, z):
+    log_p = 0
+    
     phi = z @ F
     
     D = len(phi)
     
-    G = len(x.log_pi)
-    
-    log_p = 0
-    
-    log_p_sample = np.zeros(G)
-    
     for d in range(D):
-        f = phi[d]
-        
-        t = x.tumour_content[d]
-        
-        for g in range(len(x.log_pi)):
-            cn_n, cn_r, cn_v = x.cn[g]
-        
-            mu_n, mu_r, mu_v = x.mu[g]
-        
-            norm = (1 - t) * cn_n + t * (1 - f) * cn_r + t * f * cn_v
-        
-            prob = (1 - t) * cn_n * mu_n + t * (1 - f) * cn_r * mu_r + t * f * cn_v * mu_v
-        
-            prob /= norm
-
-            log_p_sample[g] = x.log_pi[g] + log_beta_binomial_pdf(x.d[d], x.b[d], prob, precision)
-        
-        log_p += log_sum_exp(log_p_sample)
+        log_p += _log_p_sample(x.sample_data_points[d], phi[d], precision)
     
     return log_p
+        
 
+@numba.njit(cache=False)        
+def _log_p_sample(x, phi, precision):
+    G = len(x.log_pi)
+    
+    log_p = np.zeros(G)
+
+    f = phi
+        
+    t = x.tumour_content
+        
+    for g in range(len(x.log_pi)):
+        cn_n, cn_r, cn_v = x.cn[g]
+    
+        mu_n, mu_r, mu_v = x.mu[g]
+    
+        norm = (1 - t) * cn_n + t * (1 - f) * cn_r + t * f * cn_v
+    
+        prob = (1 - t) * cn_n * mu_n + t * (1 - f) * cn_r * mu_r + t * f * cn_v * mu_v
+    
+        prob /= norm
+
+        log_p[g] = x.log_pi[g] + log_beta_binomial_pdf(x.d, x.b, prob, precision)
+    
+    return log_sum_exp(log_p)
+    
 
 @numba.njit(cache=True)
 def get_beta_binomial_params(m, s):
