@@ -1,6 +1,5 @@
 import numba
 import numpy as np
-import scipy.stats
 
 from pgfa.utils import get_b_cubed_score
 
@@ -25,12 +24,14 @@ def main():
     set_seed(data_seed)
 
     ibp = False
-    time = np.inf
+    time = 10
     D = 10
     K = 20
-    N = 1000
-
-    data, data_true, params = simulate_data(D, N, K=K, alpha=2, prop_missing=0.00, tau_v=0.25, tau_x=25)
+    N = 100
+    
+    params = pgfa.models.linear_gaussian.simulate_params(alpha=1, tau_v=0.25, tau_x=25, D=D, K=K, N=N)
+    
+    data, data_true = pgfa.models.linear_gaussian.simulate_data(params, prop_missing=0)
 
     for d in range(D):
         assert not np.all(np.isnan(data[:, d]))
@@ -178,38 +179,6 @@ def get_model_updater(feat_alloc_updater_type='g', annealing_power=0, ibp=True, 
     return pgfa.models.linear_gaussian.ModelUpdater(feat_alloc_updater)
 
 
-def simulate_data(D, N, K=None, alpha=1, prop_missing=0, tau_v=1, tau_x=1):
-    feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K=K)
-
-    Z = feat_alloc_dist.rvs(alpha, N)
-    
-#     Z = np.random.randint(0, 2, size=(N, K))
-
-    K = Z.shape[1]
-
-    V = scipy.stats.matrix_normal.rvs(
-        mean=np.zeros((K, D)),
-        rowcov=(1 / tau_v) * np.eye(K),
-        colcov=np.eye(D)
-    )
-
-    data_true = scipy.stats.matrix_normal.rvs(
-        mean=Z @ V,
-        rowcov=(1 / tau_x) * np.eye(N),
-        colcov=np.eye(D)
-    )
-
-    mask = np.random.uniform(0, 1, size=data_true.shape) <= prop_missing
-
-    data = data_true.copy()
-
-    data[mask] = np.nan
-
-    params = pgfa.models.linear_gaussian.Parameters(alpha, np.ones(2), tau_v, np.ones(2), tau_x, np.ones(2), V, Z)
-
-    return data, data_true, params
-
-
 def compute_l2_error(data, data_true, params):
     idxs = np.isnan(data)
     
@@ -223,17 +192,17 @@ def compute_l2_error(data, data_true, params):
 
 if __name__ == '__main__':
 #     import line_profiler
-#  
+#   
 #     profiler = line_profiler.LineProfiler()
-#  
+#   
 #     profiler.add_function(pgfa.updates.DicreteParticleFilterUpdater.update_row)
-#      
+#       
 #     profiler.add_function(pgfa.updates.DicreteParticleFilterUpdater._get_new_particle)
-#     
-#     profiler.add_function(pgfa.updates.discrete_particle_filter.DicreteParticleFilterUpdater._resample)
-#  
-#     profiler.run('main()')
 #      
+#     profiler.add_function(pgfa.updates.discrete_particle_filter.DicreteParticleFilterUpdater._resample)
+#   
+#     profiler.run('main()')
+#       
 #     profiler.print_stats()
 
     main()

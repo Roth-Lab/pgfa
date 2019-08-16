@@ -8,6 +8,48 @@ from pgfa.math_utils import do_metropolis_hastings_accept_reject
 import pgfa.models.base
 
 
+def get_model(data, K=None):
+    if K is None:
+        feat_alloc_dist = pgfa.feature_allocation_distributions.IndianBuffetProcessDistribution()
+
+    else:
+        feat_alloc_dist = pgfa.feature_allocation_distributions.BetaBernoulliFeatureAllocationDistribution(K)
+
+    return pgfa.models.linear_gaussian.Model(data, feat_alloc_dist)
+
+
+def simulate_data(params, prop_missing=0):
+    data_true = scipy.stats.matrix_normal.rvs(
+        mean=params.Z @ params.V,
+        rowcov=(1 / params.tau_x) * np.eye(params.N),
+        colcov=np.eye(params.D)
+    )
+
+    mask = np.random.uniform(0, 1, size=data_true.shape) <= prop_missing
+
+    data = data_true.copy()
+
+    data[mask] = np.nan
+
+    return data, data_true
+
+
+def simulate_params(alpha=1, tau_v=1, tau_x=1, D=1, K=None, N=100):
+    feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K=K)
+
+    Z = feat_alloc_dist.rvs(alpha, N)
+
+    K = Z.shape[1]
+
+    V = scipy.stats.matrix_normal.rvs(
+        mean=np.zeros((K, D)),
+        rowcov=(1 / tau_v) * np.eye(K),
+        colcov=np.eye(D)
+    )
+    
+    return Parameters(alpha, np.ones(2), tau_v, np.ones(2), tau_x, np.ones(2), V, Z)
+
+
 class Model(pgfa.models.base.AbstractModel):
 
     @staticmethod
