@@ -18,20 +18,20 @@ def main():
     
     data_seed = 1
     param_seed = 1
-    run_seed = 0
-    updater = 'dpf'
+    run_seed = 1
+    updater = 'pg'
 
     set_seed(data_seed)
 
     ibp = False
-    time = 10
+    time = 100
     D = 10
     K = 20
     N = 100
     
-    params = pgfa.models.linear_gaussian.simulate_params(alpha=1, tau_v=0.25, tau_x=25, D=D, K=K, N=N)
+    params = pgfa.models.linear_gaussian.simulate_params(alpha=2, tau_v=0.25, tau_x=25, D=D, K=K, N=N)
     
-    data, data_true = pgfa.models.linear_gaussian.simulate_data(params, prop_missing=0)
+    data, data_true = pgfa.models.linear_gaussian.simulate_data(params, prop_missing=0.1)
 
     for d in range(D):
         assert not np.all(np.isnan(data[:, d]))
@@ -40,7 +40,12 @@ def main():
         assert not np.all(np.isnan(data[n]))
 
     model_updater = get_model_updater(
-        annealing_power=annealing_power, feat_alloc_updater_type=updater, ibp=ibp, mixed_updates=False, num_particles=num_particles
+        annealing_power=annealing_power, 
+        feat_alloc_updater_type=updater, 
+        ibp=ibp, 
+        mixed_updates=False, 
+        num_particles=num_particles,
+        zero_suffix=False
     )
 
     set_seed(param_seed)
@@ -49,25 +54,19 @@ def main():
 
     print(sorted(np.sum(params.Z, axis=0)))
 
-    print('@' * 100)
-
     old_params = model.params.copy()
 
     model.params = params.copy()
 
     log_p_true = model.log_p
     
-#     model.params.Z = old_params.Z
-
     model.params = old_params.copy()
-    
-#     model.params.Z = params.Z.copy()
-# 
-#     model.params.alpha = params.alpha
 
     print(log_p_true)
 
     set_seed(run_seed)
+
+    print('@' * 100)
 
     timer = Timer()
 
@@ -145,7 +144,7 @@ def get_model(data, ibp=False, K=None):
     return pgfa.models.linear_gaussian.Model(data, feat_alloc_dist)
 
 
-def get_model_updater(feat_alloc_updater_type='g', annealing_power=0, ibp=True, mixed_updates=False, num_particles=20):
+def get_model_updater(feat_alloc_updater_type='g', annealing_power=0, ibp=True, mixed_updates=False, num_particles=20, zero_suffix=False):
     if ibp:
         singletons_updater = pgfa.models.linear_gaussian.PriorSingletonsUpdater()
 
@@ -154,7 +153,7 @@ def get_model_updater(feat_alloc_updater_type='g', annealing_power=0, ibp=True, 
 
     if feat_alloc_updater_type == 'dpf':
         feat_alloc_updater = pgfa.updates.DicreteParticleFilterUpdater(
-            annealing_power=annealing_power, max_particles=num_particles, singletons_updater=singletons_updater
+            annealing_power=annealing_power, max_particles=num_particles, singletons_updater=singletons_updater, zero_suffix=zero_suffix
         )
 
     elif feat_alloc_updater_type == 'g':
@@ -167,7 +166,7 @@ def get_model_updater(feat_alloc_updater_type='g', annealing_power=0, ibp=True, 
 
     elif feat_alloc_updater_type == 'pg':
         feat_alloc_updater = pgfa.updates.ParticleGibbsUpdater(
-            annealing_power=annealing_power, num_particles=num_particles, singletons_updater=singletons_updater
+            annealing_power=annealing_power, num_particles=num_particles, singletons_updater=singletons_updater, zero_suffix=zero_suffix
         )
 
     elif feat_alloc_updater_type == 'rg':

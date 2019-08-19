@@ -8,12 +8,14 @@ from pgfa.updates.base import FeatureAllocationMatrixUpdater
 
 class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
 
-    def __init__(self, annealing_power=0.0, max_particles=10, singletons_updater=None):
+    def __init__(self, annealing_power=0.0, max_particles=10, singletons_updater=None, zero_suffix=False):
         self.annealing_power = annealing_power
         
         self.max_particles = max_particles
 
         self.singletons_updater = singletons_updater
+        
+        self.zero_suffix = zero_suffix
 
     def update_row(self, cols, data, dist, feat_probs, params, row_idx):
         T = len(cols)
@@ -41,6 +43,9 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
             for log_W, parent_particle in zip(swarm.log_weights, swarm.particles):
                 if parent_particle is not None:
                     params.Z[row_idx, cols[:t]] = parent_particle.path
+                
+                if self.zero_suffix:
+                    params.Z[row_idx, cols[t:]] = 0
           
                 for s in states:
                     particle = self._get_new_particle(

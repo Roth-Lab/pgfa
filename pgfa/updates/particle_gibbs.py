@@ -7,7 +7,7 @@ from pgfa.updates.base import FeatureAllocationMatrixUpdater
 
 class ParticleGibbsUpdater(FeatureAllocationMatrixUpdater):
 
-    def __init__(self, annealing_power=0.0, num_particles=10, resample_scheme='multinomial', resample_threshold=0.5, singletons_updater=None):
+    def __init__(self, annealing_power=0.0, num_particles=10, resample_scheme='multinomial', resample_threshold=0.5, singletons_updater=None, zero_suffix=False):
         self.annealing_power = annealing_power
 
         self.num_particles = num_particles
@@ -17,6 +17,8 @@ class ParticleGibbsUpdater(FeatureAllocationMatrixUpdater):
         self.resample_threshold = resample_threshold
 
         self.singletons_updater = singletons_updater
+        
+        self.zero_suffix = zero_suffix
     
     def update_row(self, cols, data, dist, feat_probs, params, row_idx):
         T = len(cols)
@@ -45,6 +47,9 @@ class ParticleGibbsUpdater(FeatureAllocationMatrixUpdater):
             for i, (parent_particle, log_W) in enumerate(zip(swarm.particles, swarm.log_weights)):
                 if parent_particle is not None:
                     params.Z[row_idx, cols[:t]] = parent_particle.path
+                
+                if self.zero_suffix:
+                    params.Z[row_idx, cols[t:]] = 0
                 
                 if i == 0:
                     value = conditional_path[t]
