@@ -13,21 +13,23 @@ np.seterr(all='warn')
 
 
 def main():
+    print_freq = 10
+    
     annealing_power = 1.0
     num_particles = 20
     
     data_seed = 1
     param_seed = 1
     run_seed = 1
-    updater = 'pg'
+    updater = 'dpf'
 
     set_seed(data_seed)
 
-    ibp = False
+    ibp = True
     time = 100
     D = 10
     K = 20
-    N = 100
+    N = 200
     
     params = pgfa.models.linear_gaussian.simulate_params(alpha=2, tau_v=0.25, tau_x=25, D=D, K=K, N=N)
     
@@ -40,10 +42,10 @@ def main():
         assert not np.all(np.isnan(data[n]))
 
     model_updater = get_model_updater(
-        annealing_power=annealing_power, 
-        feat_alloc_updater_type=updater, 
-        ibp=ibp, 
-        mixed_updates=False, 
+        annealing_power=annealing_power,
+        feat_alloc_updater_type=updater,
+        ibp=ibp,
+        mixture_prob=0.0,
         num_particles=num_particles,
         zero_suffix=False
     )
@@ -72,14 +74,12 @@ def main():
 
     i = 0
     
-    if updater == 'g':
-        thin = 10
+    last_print_time = -np.float('inf')
     
-    else:
-        thin = 1
-
     while timer.elapsed < time:
-        if i % thin == 0:
+        if (timer.elapsed - last_print_time) > print_freq:
+            last_print_time = timer.elapsed
+            
             print(
                 i,
                 model.log_p,
@@ -144,7 +144,7 @@ def get_model(data, ibp=False, K=None):
     return pgfa.models.linear_gaussian.Model(data, feat_alloc_dist)
 
 
-def get_model_updater(feat_alloc_updater_type='g', annealing_power=0, ibp=True, mixed_updates=False, num_particles=20, zero_suffix=False):
+def get_model_updater(feat_alloc_updater_type='g', annealing_power=0, ibp=True, mixture_prob=0.0, num_particles=20, zero_suffix=False):
     if ibp:
         singletons_updater = pgfa.models.linear_gaussian.PriorSingletonsUpdater()
 
@@ -172,8 +172,8 @@ def get_model_updater(feat_alloc_updater_type='g', annealing_power=0, ibp=True, 
     elif feat_alloc_updater_type == 'rg':
         feat_alloc_updater = pgfa.updates.RowGibbsUpdater(singletons_updater=singletons_updater)
 
-    if mixed_updates:
-        feat_alloc_updater = pgfa.updates.GibbsMixtureUpdater(feat_alloc_updater)
+    if mixture_prob > 0:
+        feat_alloc_updater = pgfa.updates.GibbsMixtureUpdater(feat_alloc_updater, gibbs_prob=mixture_prob)
 
     return pgfa.models.linear_gaussian.ModelUpdater(feat_alloc_updater)
 
