@@ -34,7 +34,13 @@ class ParticleGibbsUpdater(FeatureAllocationMatrixUpdater):
 
         for t in range(T):           
             if t > 0:
-                particles = self._resample(swarm)
+                try:
+                    particles = self._resample(swarm)
+                
+                except ValueError:
+                    params.Z[row_idx, cols] = conditional_path
+                    
+                    return params
 
                 assert np.all(particles[0].path == conditional_path[:t])
 
