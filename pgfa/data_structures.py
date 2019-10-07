@@ -30,7 +30,13 @@ class ParticleSwarm(object):
 
     @property
     def log_weights(self):
-        return self.unnormalized_log_weights - self.log_norm_const
+        if np.isneginf(self.log_norm_const):
+            weights = (1 / self.num_particles) * np.ones(self.num_particles)
+        
+        else:
+            weights = self.unnormalized_log_weights - self.log_norm_const
+        
+        return weights
 
     @property
     def num_particles(self):
