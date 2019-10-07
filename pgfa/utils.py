@@ -5,7 +5,7 @@ import time
 import pgfa.updates
 
 
-def get_feat_alloc_updater(mixed_updates=False, updater='g', updater_kwargs={}):
+def get_feat_alloc_updater(mixture_prob=0.0, updater='g', updater_kwargs={}):
     if updater == 'dpf':   
         feat_alloc_updater = pgfa.updates.DicreteParticleFilterUpdater(**updater_kwargs)
     
@@ -24,8 +24,8 @@ def get_feat_alloc_updater(mixed_updates=False, updater='g', updater_kwargs={}):
     else:
         raise Exception('Unrecognized feature allocation updater: {}'.format(updater))
     
-    if mixed_updates:
-        feat_alloc_updater = pgfa.updates.GibbsMixtureUpdater(feat_alloc_updater)
+    if mixture_prob > 0:
+        feat_alloc_updater = pgfa.updates.GibbsMixtureUpdater(feat_alloc_updater, gibbs_prob=mixture_prob)
 
     return feat_alloc_updater
 
