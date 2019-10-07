@@ -2,7 +2,7 @@ import numba
 import numpy as np
 import scipy.stats
 
-from pgfa.math_utils import do_metropolis_hastings_accept_reject, log_factorial
+from pgfa.math_utils import discrete_rvs, do_metropolis_hastings_accept_reject, log_factorial, log_normalize, log_sum_exp
 
 import pgfa.models.base
 
@@ -33,6 +33,8 @@ class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
 
     def _update_model_params(self, model):
         update_V(model)
+        
+        update_V_random_grid(model)
 
 
 class Parameters(pgfa.models.base.AbstractParameters):
@@ -134,6 +136,61 @@ def update_V(model, variance=1):
             else:
                 params.V[n, k] = v_old
     
+    model.params = params
+
+
+def update_V_random_grid(model, num_points=10):
+    if model.params.K < 2:
+        return 
+    
+    params = model.params.copy()
+    
+    N, K = params.V.shape
+    
+    for n in range(N):
+        old = params.V[n]
+    
+        dim = K
+        
+        e = scipy.stats.multivariate_normal.rvs(np.zeros(dim), np.eye(dim))
+        
+        e /= np.linalg.norm(e)
+        
+        r = scipy.stats.gamma.rvs(1, 1)
+        
+        grid = np.arange(1, num_points + 1)
+        
+        ys = old[np.newaxis, :] + grid[:, np.newaxis] * r * e[np.newaxis, :]
+        
+        log_p_new = np.zeros(num_points)
+        
+        for i in range(num_points):
+            params.V[n] = ys[i]
+            
+            log_p_new[i] = model.joint_dist.log_p(model.data, params)
+        
+        if np.all(np.isneginf(log_p_new)):
+            return
+        
+        idx = discrete_rvs(np.exp(0.5 * np.log(grid) + log_normalize(log_p_new)))
+        
+        new = ys[idx]
+        
+        xs = new[np.newaxis, :] - grid[:, np.newaxis] * r * e[np.newaxis, :]
+            
+        log_p_old = np.zeros(num_points)
+    
+        for i in range(num_points):
+            params.V[n] = xs[i]
+            
+            log_p_old[i] = model.joint_dist.log_p(model.data, params)
+        
+        if do_metropolis_hastings_accept_reject(log_sum_exp(log_p_new), log_sum_exp(log_p_old), 0, 0):
+            params.V[n] = new
+        
+        else:
+            params.V[n] = old
+        
     model.params = params
 
 
