@@ -2,7 +2,8 @@ import numba
 import numpy as np
 import scipy.stats
 
-from pgfa.math_utils import discrete_rvs, do_metropolis_hastings_accept_reject, log_factorial, log_normalize, log_sum_exp
+from pgfa.math_utils import discrete_rvs, do_metropolis_hastings_accept_reject, log_factorial, log_normalize, log_sum_exp, \
+    bernoulli_rvs
 
 import pgfa.models.base
 
@@ -33,8 +34,6 @@ class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
 
     def _update_model_params(self, model):
         update_V(model)
-        
-        update_V_random_grid(model)
 
 
 class Parameters(pgfa.models.base.AbstractParameters):
@@ -104,8 +103,8 @@ def update_V(model, variance=1):
     
     a_prior, b_prior = model.params.V_prior
     
-    for n in range(model.params.N):
-        for k in range(model.params.K):
+    for n in np.random.permutation(model.params.N):
+        for k in np.random.permutation(model.params.K):
             v_old = params.V[n, k]
             
             a, b = _get_gamma_params(v_old, variance)
@@ -135,6 +134,62 @@ def update_V(model, variance=1):
             
             else:
                 params.V[n, k] = v_old
+    
+    model.params = params
+
+
+def update_V_Z(model, variance=1):
+    params = model.params.copy()
+    
+    a_prior, b_prior = model.params.V_prior
+    
+    for n in np.random.permutation(model.params.N):
+        for k in np.random.permutation(model.params.K):
+            v_old = params.V[n, k]
+            
+            z_old = params.Z[n, k]
+            
+            a, b = _get_gamma_params(v_old, variance)
+    
+            v_new = scipy.stats.gamma.rvs(a, scale=(1 / b))
+            
+            z_new = bernoulli_rvs(0.5)
+        
+            params.V[n, k] = v_new
+            
+            params.Z[n, k] = z_new
+            
+            log_p_new = model.data_dist.log_p_row(model.data, params, n) 
+            
+            log_p_new += model.feat_alloc_dist.log_p(params)
+            
+            log_p_new += scipy.stats.gamma.logpdf(v_new, a_prior, scale=(1 / b_prior))
+            
+            log_q_new = scipy.stats.gamma.logpdf(v_new, a, scale=(1 / b))
+        
+            a, b = _get_gamma_params(v_new, variance)
+            
+            params.V[n, k] = v_old
+            
+            params.Z[n, k] = z_old
+            
+            log_p_old = model.data_dist.log_p_row(model.data, params, n)
+            
+            log_p_old += model.feat_alloc_dist.log_p(params)
+            
+            log_p_old += scipy.stats.gamma.logpdf(v_old, a_prior, scale=(1 / b_prior))
+            
+            log_q_old = scipy.stats.gamma.logpdf(v_old, a, scale=(1 / b))
+            
+            if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, log_q_new, log_q_old):
+                params.V[n, k] = v_new
+                
+                params.Z[n, k] = z_new
+            
+            else:
+                params.V[n, k] = v_old
+                
+                params.Z[n, k] = z_old
     
     model.params = params
 
@@ -186,10 +241,66 @@ def update_V_random_grid(model, num_points=10):
             log_p_old[i] = model.joint_dist.log_p(model.data, params)
         
         if do_metropolis_hastings_accept_reject(log_sum_exp(log_p_new), log_sum_exp(log_p_old), 0, 0):
+            print('Accept')
             params.V[n] = new
         
         else:
             params.V[n] = old
+        
+    model.params = params
+
+
+def update_V_random_grid_log(model, num_points=10):
+    if model.params.K < 2:
+        return 
+    
+    params = model.params.copy()
+    
+    N, K = params.V.shape
+    
+    for n in range(N):
+        old = np.log(params.V[n])
+    
+        dim = K
+        
+        e = scipy.stats.multivariate_normal.rvs(np.zeros(dim), np.eye(dim))
+        
+        e /= np.linalg.norm(e)
+        
+        r = scipy.stats.gamma.rvs(1, 1)
+        
+        grid = np.arange(1, num_points + 1)
+        
+        ys = old[np.newaxis, :] + grid[:, np.newaxis] * r * e[np.newaxis, :]
+        
+        log_p_new = np.zeros(num_points)
+        
+        for i in range(num_points):
+            params.V[n] = np.exp(ys[i])
+            
+            log_p_new[i] = model.joint_dist.log_p(model.data, params)
+        
+        if np.all(np.isneginf(log_p_new)):
+            return
+        
+        idx = discrete_rvs(np.exp(0.5 * np.log(grid) + log_normalize(log_p_new)))
+        
+        new = ys[idx]
+        
+        xs = new[np.newaxis, :] - grid[:, np.newaxis] * r * e[np.newaxis, :]
+            
+        log_p_old = np.zeros(num_points)
+    
+        for i in range(num_points):
+            params.V[n] = np.exp(xs[i])
+            
+            log_p_old[i] = model.joint_dist.log_p(model.data, params)
+        
+        if do_metropolis_hastings_accept_reject(log_sum_exp(log_p_new), log_sum_exp(log_p_old), 0, 0):                     
+            params.V[n] = np.exp(new)
+        
+        else:
+            params.V[n] = np.exp(old)
         
     model.params = params
 
@@ -255,7 +366,9 @@ def _log_p_row(S, v, x, z):
     
     w = w / np.sum(w)
     
-    pi = w @ S
+    pi = w @ S  # + 1e-6
+    
+    pi = pi / np.sum(pi)
     
     log_p = 0 
     
@@ -267,6 +380,9 @@ def _log_p_row(S, v, x, z):
         
         if pi[d] > 0:
             log_p += x[d] * np.log(pi[d])
+            
+        elif (pi[d] == 0) and (x[d] > 0):
+            return -np.inf
     
     log_p += log_factorial(np.nansum(x))
     
