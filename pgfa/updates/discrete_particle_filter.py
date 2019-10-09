@@ -1,8 +1,9 @@
+import numba
 import numpy as np
 import scipy.optimize
 
 from pgfa.data_structures import Particle, ParticleSwarm
-from pgfa.math_utils import bernoulli_rvs, log_sum_exp
+from pgfa.math_utils import log_sum_exp
 from pgfa.updates.base import FeatureAllocationMatrixUpdater
 
 
@@ -89,26 +90,17 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
         prior = log_feat_probs[value, col]
 
         log_p = annealing_factor * dist.log_p_row(data, params, row_idx)
-        
-        if np.isneginf(log_p) or np.isneginf(parent_log_p):
-            log_w = -np.inf
-        
-        else:
-            log_w = prior + log_p - parent_log_p
+
+        log_w = _get_log_w(log_p, parent_log_p, prior)
 
         return Particle(log_p, log_w, parent, parent_path + [value])
     
     def _resample(self, swarm):
         log_W = swarm.log_weights
-        
-        def f(x):
-            y = log_W - x
-            y[y >= 0] = 0
-            return log_sum_exp(y)
-        
+
         log_W[np.isneginf(log_W)] = -1e10
-        
-        log_l = scipy.optimize.bisect(lambda x:f(x) - np.log(self.max_particles), log_W.min(), 1000)
+
+        log_l = scipy.optimize.bisect(_resample_opt_func, log_W.min(), 1000, args=(np.log(self.max_particles), log_W))
         
         new_swarm = ParticleSwarm()
         
@@ -123,10 +115,45 @@ class DicreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
                 new_swarm.add_particle(log_W[i], swarm[i])
             
             else:
-                if bernoulli_rvs(np.exp(log_W[i] - log_l)) == 1:
+                if bernoulli_rvs_log(log_W[i] - log_l):
                     new_swarm.add_particle(log_l, swarm[i])
         
         return new_swarm
+
+
+@numba.njit(cache=True)
+def bernoulli_rvs_log(log_p):
+    if np.log(np.random.random()) < log_p:
+        return True
+    
+    else:
+        return False
+
+    
+@numba.jit(cache=True)
+def _get_log_w(log_p, parent_log_p, prior):
+    """ Workaround to slow np.isneginf. 
+    """
+    if np.isinf(log_p) and log_p < 0:
+        log_w = -np.inf
+    
+    elif np.isinf(parent_log_p) and parent_log_p < 0:
+        log_w = -np.inf
+    
+    else:
+        log_w = prior + log_p - parent_log_p
+        
+    return log_w
+
+
+@numba.njit(cache=True)
+def _resample_opt_func(x, log_N, log_W):
+    y = log_W - x
+    
+    y[y >= 0] = 0
+    
+    return log_sum_exp(y) - log_N
+  
 # 
 # #     def _resample(self, swarm):
 # #         log_W = swarm.log_weights      
