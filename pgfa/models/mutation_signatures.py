@@ -1,5 +1,6 @@
 import numba
 import numpy as np
+import scipy.optimize
 import scipy.stats
 
 from pgfa.math_utils import discrete_rvs, do_metropolis_hastings_accept_reject, log_factorial, log_normalize, log_sum_exp, \
@@ -28,12 +29,20 @@ class Model(pgfa.models.base.AbstractModel):
         self.joint_dist = pgfa.models.base.JointDistribution(
             DataDistribution(), feat_alloc_dist, ParametersDistribution()
         )
+#         
+#         self.joint_dist = pgfa.models.base.MAPJointDistribution(
+#             DataDistribution(), feat_alloc_dist, ParametersDistribution(), temp=1e-5
+#         )
 
 
 class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
 
     def _update_model_params(self, model):
+        update_S(model)
+        
         update_V(model)
+        
+#         update_V_MAP(model)
 
 
 class Parameters(pgfa.models.base.AbstractParameters):
@@ -94,10 +103,139 @@ class Parameters(pgfa.models.base.AbstractParameters):
             self.Z.copy()
         )
 
-
 #=========================================================================
 # Updates
 #=========================================================================
+# def update_S(model, precision=1):
+#     params = model.params.copy()
+#      
+#     S_prior = model.params.S_prior
+#      
+#     for k in np.random.permutation(model.params.K):
+#         s_old = params.S[k].copy()
+#          
+#         s_new = np.squeeze(scipy.stats.dirichlet.rvs(S_prior))
+#      
+#         params.S[k] = s_new
+#          
+#         log_p_new = model.data_dist.log_p(model.data, params)
+#         
+#         log_q_new = 0
+#          
+#         params.S[k] = s_old
+#          
+#         log_p_old = model.data_dist.log_p(model.data, params)
+#          
+#         log_q_old = 0
+#          
+#         if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, log_q_new, log_q_old):
+#             params.S[k] = s_new
+#          
+#         else:
+#             params.S[k] = s_old
+#      
+#     model.params = params
+
+    
+def update_S(model, precision=1):
+    params = model.params.copy()
+      
+    S_prior = model.params.S_prior
+      
+    for k in range(model.params.K):
+        s_old = params.S[k].copy()
+          
+        s_new_mean = s_old * precision
+          
+        s_new_mean[s_new_mean < 1e-6] = 1e-6
+  
+        s_new = np.squeeze(scipy.stats.dirichlet.rvs(s_new_mean)) + 1e-6
+          
+        s_new = s_new / np.sum(s_new)
+      
+        params.S[k] = s_new
+          
+        log_p_new = model.data_dist.log_p(model.data, params)
+          
+        log_p_new += scipy.stats.dirichlet.logpdf(s_new, S_prior)
+          
+        log_q_new = scipy.stats.dirichlet.logpdf(s_new, s_new_mean)
+          
+        s_old_mean = s_new * precision
+             
+        params.S[k] = s_old
+          
+        log_p_old = model.data_dist.log_p(model.data, params)
+          
+        log_p_old += scipy.stats.dirichlet.logpdf(s_old, S_prior)
+          
+        log_q_old = scipy.stats.dirichlet.logpdf(s_old, s_old_mean)
+          
+        if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, log_q_new, log_q_old):
+            params.S[k] = s_new
+          
+        else:
+            params.S[k] = s_old
+      
+    model.params = params
+
+# def update_S(model, variance=1):
+#     params = model.params.copy()
+#     
+#     for k in np.random.permutation(model.params.K):
+#         for d in np.random.permutation(model.params.D):
+#             old = params.S[k, d]
+#             
+#             a, b = _get_gamma_params(old, variance)
+#     
+#             new = scipy.stats.gamma.rvs(a, scale=(1 / b))
+#         
+#             params.S[k, d] = new
+#             
+#             log_p_new = model.joint_dist.log_p(model.data, params)
+#             
+#             log_q_new = scipy.stats.gamma.logpdf(new, a, scale=(1 / b))
+#         
+#             a, b = _get_gamma_params(new, variance)
+#             
+#             params.S[k, d] = old
+#             
+#             log_p_old = model.joint_dist.log_p(model.data, params)
+#             
+#             log_q_old = scipy.stats.gamma.logpdf(old, a, scale=(1 / b))
+#             
+#             if do_metropolis_hastings_accept_reject(log_p_new, log_p_old, log_q_new, log_q_old):
+#                 params.S[k, d] = new
+#             
+#             else:
+#                 params.S[k, d] = old
+#     
+#     model.params = params
+
+
+def update_V_MAP(model):
+
+    def opt_func(x, model, prior_dist, n):
+        model.params.V[n] = x
+        log_p = model.data_dist.log_p_row(model.data, model.params, n) + np.sum(prior_dist.logpdf(x))
+        return -log_p
+    
+    params = model.params.copy()
+    
+    a_prior, b_prior = model.params.V_prior
+    
+    prior_dist = scipy.stats.gamma(a_prior, scale=(1 / b_prior))
+
+    for n in np.random.permutation(model.params.N):
+        f = lambda x: opt_func(x, model, prior_dist, n)
+        
+        res = scipy.optimize.minimize(f, params.V[n])
+        
+        params.V[n] = res.x
+    
+    model.params = params
+        
+        
 def update_V(model, variance=1):
     params = model.params.copy()
     
@@ -339,6 +477,9 @@ class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
         a = params.V_prior[0]
         b = params.V_prior[1]
         log_p += np.sum(scipy.stats.gamma.logpdf(params.V, a, scale=(1 / b)))
+        
+        for k in range(params.K):
+            log_p += scipy.stats.dirichlet.logpdf(params.S[k], params.S_prior)
      
         return log_p
 

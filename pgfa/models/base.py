@@ -2,6 +2,7 @@ import pgfa.feature_allocation_distributions
 
 
 class AbstractModel(object):
+
     @staticmethod
     def get_default_params(data, feat_alloc_dist):
         raise NotImplementedError
@@ -39,6 +40,7 @@ class AbstractModel(object):
 
 
 class AbstractModelUpdater(object):
+
     def _update_model_params(self, model):
         """ Update the model specific parameters.
         """
@@ -61,6 +63,7 @@ class AbstractModelUpdater(object):
 
 
 class AbstractDataDistribution(object):
+
     def log_p(self, data, params):
         raise NotImplementedError
 
@@ -69,11 +72,13 @@ class AbstractDataDistribution(object):
 
 
 class AbstractParametersDistribution(object):
+
     def log_p(self, params):
         raise NotImplementedError
 
 
 class AbstractParameters(object):
+
     @property
     def param_shapes(self):
         raise NotImplementedError
@@ -101,6 +106,7 @@ class AbstractParameters(object):
 
 
 class JointDistribution(object):
+
     def __init__(self, data_dist, feat_alloc_dist, params_dist):
         self.data_dist = data_dist
 
@@ -118,3 +124,27 @@ class JointDistribution(object):
         log_p += self.params_dist.log_p(params)
 
         return log_p
+
+
+class MAPJointDistribution(object):
+
+    def __init__(self, data_dist, feat_alloc_dist, params_dist, temp=1e-3):
+        self.data_dist = data_dist
+
+        self.feat_alloc_dist = feat_alloc_dist
+
+        self.params_dist = params_dist
+        
+        self.temp = temp
+
+    def log_p(self, data, params):        
+        log_p = 0
+
+        log_p += self.data_dist.log_p(data, params)
+
+        log_p += self.feat_alloc_dist.log_p(params)
+
+        log_p += self.params_dist.log_p(params)
+
+        return (1 / self.temp) * log_p
+    
