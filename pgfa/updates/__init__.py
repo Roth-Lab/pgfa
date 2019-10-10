@@ -1,4 +1,4 @@
-from .discrete_particle_filter import DicreteParticleFilterUpdater
+from .discrete_particle_filter import DiscreteParticleFilterUpdater
 from .gibbs import GibbsUpdater
 from .gumbel_particle_filter import GumbelParticleFilterUpdater
 from .metropolis_hastings import MetropolisHastingsUpdater
