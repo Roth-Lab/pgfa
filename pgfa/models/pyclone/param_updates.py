@@ -132,7 +132,7 @@ def update_V_random_grid_pairwise(model, num_points=10):
 
         log_p_new[i] = model.joint_dist.log_p(model.data, params)
 
-    if np.all(np.isneginf(log_p_new)):
+    if np.all(np.isneginf(log_p_new)) or np.any(np.isnan(log_p_new)):
         return
 
     idx = discrete_rvs(np.exp(0.5 * np.log(grid) + log_normalize(log_p_new)))
