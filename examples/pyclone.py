@@ -5,7 +5,9 @@ import scipy.stats
 from pgfa.utils import get_b_cubed_score
 
 import pgfa.feature_allocation_distributions
-import pgfa.models.pyclone
+import pgfa.models.pyclone.binomial
+import pgfa.models.pyclone.singletons_updates
+import pgfa.models.pyclone.utils
 import pgfa.updates
 
 from pgfa.utils import Timer
@@ -16,19 +18,22 @@ def main():
 
     set_seed(seed)
 
-    ibp = True
+    ibp = False
     time = 10000
-    D = 6
-    K = 4
-    N = 100
+    D = 10
+    K = 8
+    N = 200
+
+    updater = 'g'
+    test_path = 'conditional'
 
     data, params = simulate_data(D, N, K=K, alpha=2)
 
     model_updater = get_model_updater(
-        feat_alloc_updater_type='g', ibp=ibp, mixed_updates=False
+        feat_alloc_updater_type=updater, ibp=ibp, mixture_prob=0.0, test_path=test_path
     )
 
-    sm_updater = pgfa.models.pyclone.SplitMergeUpdater()
+    sm_updater = pgfa.models.pyclone.singletons_updates.SplitMergeUpdater()
 
     model = get_model(data, ibp=ibp, K=K)
 
@@ -76,11 +81,11 @@ def main():
         timer.start()
 
         model_updater.update(model)
-        
+
         if ibp:
             for _ in range(20):
                 sm_updater.update(model)
-        
+
         timer.stop()
 
         i += 1
@@ -104,24 +109,35 @@ def get_model(data, ibp=False, K=None):
     else:
         feat_alloc_dist = pgfa.feature_allocation_distributions.BetaBernoulliFeatureAllocationDistribution(K)
 
-    return pgfa.models.pyclone.Model(data, feat_alloc_dist)
+    return pgfa.models.pyclone.binomial.Model(data, feat_alloc_dist)
 
 
-def get_model_updater(feat_alloc_updater_type='g', annealing_power=0, ibp=True, mixed_updates=False, num_particles=20):
+def get_model_updater(
+        feat_alloc_updater_type='g',
+        annealing_power=0,
+        ibp=True,
+        mixture_prob=0.0,
+        num_particles=20,
+        test_path='conditional'
+    ):
+
     if ibp:
-        singletons_updater = pgfa.models.pyclone.PriorSingletonsUpdater()
+        singletons_updater = pgfa.models.pyclone.singletons_updates.PriorSingletonsUpdater()
 
     else:
         singletons_updater = None
 
     if feat_alloc_updater_type == 'dpf':
-        feat_alloc_updater = pgfa.updates.DicreteParticleFilterUpdater(
-            annealing_power=annealing_power, max_particles=num_particles, singletons_updater=singletons_updater
+        feat_alloc_updater = pgfa.updates.DiscreteParticleFilterUpdater(
+            annealing_power=annealing_power,
+            max_particles=num_particles,
+            singletons_updater=singletons_updater,
+            test_path=test_path
         )
 
     elif feat_alloc_updater_type == 'g':
         feat_alloc_updater = pgfa.updates.GibbsUpdater(singletons_updater=singletons_updater)
-        
+
     elif feat_alloc_updater_type == 'gpf':
         feat_alloc_updater = pgfa.updates.GumbelParticleFilterUpdater(
             annealing_power=annealing_power, max_particles=num_particles
@@ -129,16 +145,19 @@ def get_model_updater(feat_alloc_updater_type='g', annealing_power=0, ibp=True, 
 
     elif feat_alloc_updater_type == 'pg':
         feat_alloc_updater = pgfa.updates.ParticleGibbsUpdater(
-            annealing_power=annealing_power, num_particles=num_particles, singletons_updater=singletons_updater
+            annealing_power=annealing_power,
+            num_particles=num_particles,
+            singletons_updater=singletons_updater,
+            test_path=test_path
         )
 
     elif feat_alloc_updater_type == 'rg':
         feat_alloc_updater = pgfa.updates.RowGibbsUpdater(singletons_updater=singletons_updater)
 
-    if mixed_updates:
-        feat_alloc_updater = pgfa.updates.GibbsMixtureUpdater(feat_alloc_updater)
+    if mixture_prob > 0:
+        feat_alloc_updater = pgfa.updates.GibbsMixtureUpdater(feat_alloc_updater, gibbs_prob=mixture_prob)
 
-    return pgfa.models.pyclone.ModelUpdater(feat_alloc_updater)
+    return pgfa.models.pyclone.binomial.ModelUpdater(feat_alloc_updater)
 
 
 def simulate_data(D, N, K=None, alpha=1, eps=1e-3):
@@ -147,55 +166,57 @@ def simulate_data(D, N, K=None, alpha=1, eps=1e-3):
     Z = feat_alloc_dist.rvs(alpha, N)
 
     K = Z.shape[1]
-    
+
     V = scipy.stats.gamma.rvs(1, 1, size=(K, D))
-    
-    params = pgfa.models.pyclone.Parameters(alpha, np.ones(2), 100, np.array([1e-2, 1e-2]), V, np.ones(2), Z)
-    
+
+    params = pgfa.models.pyclone.binomial.Parameters(alpha, np.ones(2), V, np.ones(2), Z)
+
     F = params.F
 
     data = []
-    
+
     cn_n = 2
-    
+
     cn_r = 2
-    
+
     mu_n = eps
-    
+
     mu_r = eps
-    
+
     t = np.ones(D)
-    
+
     for n in range(N):
         phi = Z[n] @ F
-        
+
         cn_total = 2  # scipy.stats.poisson.rvs(1) + 1
-        
+
         cn_major = scipy.stats.randint.rvs(1, cn_total + 1)
-        
+
         cn_minor = cn_total - cn_major
-        
+
         cn_var = scipy.stats.randint.rvs(1, cn_major + 1)
-        
-        a = []
-        
-        b = []
-         
-        for s in range(D):
+
+        sample_data_points = []
+
+        for d in range(D):
             mu_v = min(cn_var / cn_total, 1 - eps)
-            
-            xi = (1 - t[s]) * phi[s] * cn_n * mu_n + t[s] * (1 - phi[s]) * cn_r * mu_r + t[s] * phi[s] * cn_total * mu_v
-            
-            xi /= (1 - t[s]) * phi[s] * cn_n + t[s] * (1 - phi[s]) * cn_r + t[s] * phi[s] * cn_total
-            
+
+            xi = (1 - t[d]) * phi[d] * cn_n * mu_n + t[d] * (1 - phi[d]) * cn_r * mu_r + t[d] * phi[d] * cn_total * mu_v
+
+            xi /= (1 - t[d]) * phi[d] * cn_n + t[d] * (1 - phi[d]) * cn_r + t[d] * phi[d] * cn_total
+
             d = scipy.stats.poisson.rvs(1000)
-            
-            b.append(scipy.stats.binom.rvs(d, xi))
-            
-            a.append(d - b[-1])
-      
+
+            b = scipy.stats.binom.rvs(d, xi)
+
+            a = d - b
+
+            sample_data_points.append(
+                pgfa.models.pyclone.utils.get_sample_data_point(a, b, cn_major, cn_minor, 2, eps, 1.0)
+            )
+
         data.append(
-            pgfa.models.pyclone.get_data_point(a, b, cn_major, cn_minor)
+            pgfa.models.pyclone.utils.DataPoint(sample_data_points)
         )
 
     return data, params
