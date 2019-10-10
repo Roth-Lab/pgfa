@@ -7,7 +7,7 @@ import pgfa.updates
 
 def get_feat_alloc_updater(mixture_prob=0.0, updater='g', updater_kwargs={}):
     if updater == 'dpf':   
-        feat_alloc_updater = pgfa.updates.DicreteParticleFilterUpdater(**updater_kwargs)
+        feat_alloc_updater = pgfa.updates.DiscreteParticleFilterUpdater(**updater_kwargs)
     
     elif updater == 'g':
         feat_alloc_updater = pgfa.updates.GibbsUpdater(**updater_kwargs)
