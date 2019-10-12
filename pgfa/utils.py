@@ -6,24 +6,21 @@ import pgfa.updates
 
 
 def get_feat_alloc_updater(mixture_prob=0.0, updater='g', updater_kwargs={}):
-    if updater == 'dpf':   
+    if updater == 'dpf':
         feat_alloc_updater = pgfa.updates.DiscreteParticleFilterUpdater(**updater_kwargs)
-    
+
     elif updater == 'g':
         feat_alloc_updater = pgfa.updates.GibbsUpdater(**updater_kwargs)
-        
-    elif updater == 'gpf':
-        feat_alloc_updater = pgfa.updates.GumbelParticleFilterUpdater(**updater_kwargs)
 
     elif updater == 'pg':
         feat_alloc_updater = pgfa.updates.ParticleGibbsUpdater(**updater_kwargs)
 
     elif updater == 'rg':
         feat_alloc_updater = pgfa.updates.RowGibbsUpdater(**updater_kwargs)
-    
+
     else:
         raise Exception('Unrecognized feature allocation updater: {}'.format(updater))
-    
+
     if mixture_prob > 0:
         feat_alloc_updater = pgfa.updates.GibbsMixtureUpdater(feat_alloc_updater, gibbs_prob=mixture_prob)
 
@@ -36,7 +33,7 @@ def set_seed(seed):
 
         set_numba_seed(seed)
 
-    
+
 @numba.jit
 def set_numba_seed(seed):
     np.random.seed(seed)
@@ -45,26 +42,26 @@ def set_numba_seed(seed):
 @numba.njit
 def summarize_feature_allocation_matrix(Zs, burnin=0, thin=1):
     I = len(Zs)
-    
+
     Zs = Zs[:burnin:thin]
-    
+
     best_score = 0
-    
+
     best_Z = Zs[0]
-    
+
     for i in range(I):
         score = 0
-        
+
         for j in range(I):
             score += get_b_cubed_score(Zs[i], Zs[j])[0]
-        
+
         score /= I
-        
+
         if score > best_score:
             best_score = score
-            
+
             best_Z = Zs[i]
-    
+
     return best_Z
 
 

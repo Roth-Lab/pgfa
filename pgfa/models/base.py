@@ -125,26 +125,3 @@ class JointDistribution(object):
 
         return log_p
 
-
-class MAPJointDistribution(object):
-
-    def __init__(self, data_dist, feat_alloc_dist, params_dist, temp=1e-3):
-        self.data_dist = data_dist
-
-        self.feat_alloc_dist = feat_alloc_dist
-
-        self.params_dist = params_dist
-        
-        self.temp = temp
-
-    def log_p(self, data, params):        
-        log_p = 0
-
-        log_p += self.data_dist.log_p(data, params)
-
-        log_p += self.feat_alloc_dist.log_p(params)
-
-        log_p += self.params_dist.log_p(params)
-
-        return (1 / self.temp) * log_p
-    

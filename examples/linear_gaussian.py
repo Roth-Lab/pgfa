@@ -1,61 +1,51 @@
-import numba
 import numpy as np
 
-from pgfa.utils import get_b_cubed_score
+from pgfa.utils import get_b_cubed_score, get_feat_alloc_updater, set_seed, Timer
 
-import pgfa.feature_allocation_distributions
 import pgfa.models.linear_gaussian
-import pgfa.updates
-
-from pgfa.utils import Timer
-
-np.seterr(all='warn')
 
 
-def main():
-    print_freq = 10
+def main(args):
+    set_seed(args.data_seed)
 
-    annealing_power = 1.0
-    num_particles = 20
+    params = pgfa.models.linear_gaussian.simulate_params(
+        alpha=args.alpha,
+        tau_v=args.tau_v,
+        tau_x=args.tau_x,
+        D=args.num_dims,
+        K=args.num_features,
+        N=args.num_data_points
+    )
 
-    data_seed = 2
-    param_seed = 2
-    run_seed = 1
-    updater = 'dpf'
-    test_path = 'two-stage'
+    data, data_true = pgfa.models.linear_gaussian.simulate_data(params, prop_missing=args.prop_missing)
 
-    set_seed(data_seed)
-
-    ibp = False
-    time = np.inf
-    D = 10
-    K = 20
-    N = 200
-
-    params = pgfa.models.linear_gaussian.simulate_params(alpha=2, tau_v=0.25, tau_x=25, D=D, K=K, N=N)
-
-    data, data_true = pgfa.models.linear_gaussian.simulate_data(params, prop_missing=0.1)
-
-    for d in range(D):
+    # Make sure we do not have rows/columns of data that are all missing
+    for d in range(params.D):
         assert not np.all(np.isnan(data[:, d]))
 
-    for n in range(N):
+    for n in range(params.N):
         assert not np.all(np.isnan(data[n]))
 
     model_updater = get_model_updater(
-        annealing_power=annealing_power,
-        feat_alloc_updater_type=updater,
-        ibp=ibp,
-        mixture_prob=0.5,
-        num_particles=num_particles,
-        test_path=test_path
+        annealing_power=args.annealing_power,
+        feat_alloc_updater_type=args.sampler,
+        ibp=args.ibp,
+        mixture_prob=args.mixture_prob,
+        num_particles=args.num_particles,
+        test_path=args.test_path
     )
 
-    set_seed(param_seed)
+    set_seed(args.param_seed)
 
-    model = get_model(data, ibp=ibp, K=K)
+    if args.ibp:
+        model_K = None
 
-    print(sorted(np.sum(params.Z, axis=0)))
+    else:
+        model_K = args.num_features
+
+    model = pgfa.models.linear_gaussian.get_model(data, K=model_K)
+
+    set_seed(args.run_seed)
 
     old_params = model.params.copy()
 
@@ -65,9 +55,18 @@ def main():
 
     model.params = old_params.copy()
 
-    print(log_p_true)
+    print('Arguments')
 
-    set_seed(run_seed)
+    print('-' * 100)
+
+    for key, value in sorted(vars(args).items()):
+        print('{0}: {1}'.format(key, value))
+
+    print('@' * 100)
+
+    print('True feature counts (sorted): {}'.format(sorted(np.sum(params.Z, axis=0))))
+
+    print('True log density: {}'.format(log_p_true))
 
     print('@' * 100)
 
@@ -77,81 +76,44 @@ def main():
 
     last_print_time = -np.float('inf')
 
-    while timer.elapsed < time:
-        if (timer.elapsed - last_print_time) > print_freq:
+    while timer.elapsed < args.time:
+        if (timer.elapsed - last_print_time) > args.print_freq:
             last_print_time = timer.elapsed
 
-            print(
-                i,
-                model.log_p,
-                model.params.K,
-                (model.log_p - log_p_true) / abs(log_p_true),
-                compute_l2_error(data, data_true, model.params)
-            )
+            print('Iteration: {}'.format(i))
 
-            print(
-                get_b_cubed_score(params.Z, model.params.Z)
-            )
+            print('Log density: {}'.format(model.log_p))
 
-            print(
-                model.data_dist.log_p(model.data, model.params),
-                model.feat_alloc_dist.log_p(model.params),
-                model.params_dist.log_p(model.params)
-            )
+            print('Relative log density: {}'.format((model.log_p - log_p_true) / abs(log_p_true)))
 
-            print(sorted(np.sum(model.params.Z, axis=0)))
+            if args.prop_missing > 0:
+                print('L2 error: {}'.format(compute_l2_error(data, data_true, model.params)))
 
-            print(model.params.alpha, model.params.tau_v, model.params.tau_x)
+            if args.ibp:
+                print('Num features: {}'.format(model.params.K))
 
-            Vs = np.abs(model.params.V).min(axis=1)
+            print('B-Cube scores: {}'.format(get_b_cubed_score(params.Z, model.params.Z)))
 
-            Zs = np.sum(model.params.Z, axis=0)
-
-            idxs = np.argsort(np.sum(model.params.Z, axis=0))
-
-            print([(Zs[i], Vs[i]) for i in idxs])
-
-            print(Vs.min())
+            print('Feature counts (sorted): {}'.format(sorted(np.sum(model.params.Z, axis=0))))
 
             print('#' * 100)
 
         timer.start()
 
-        model_updater.update(model)  # , alpha_updates=0)#, param_updates=0)
+        model_updater.update(model)
 
         timer.stop()
 
         i += 1
 
 
-def set_seed(seed):
-    np.random.seed(seed)
-
-    set_numba_seed(seed)
-
-
-@numba.jit
-def set_numba_seed(seed):
-    np.random.seed(seed)
-
-
-def get_model(data, ibp=False, K=None):
-    if ibp:
-        feat_alloc_dist = pgfa.feature_allocation_distributions.IndianBuffetProcessDistribution()
-
-    else:
-        feat_alloc_dist = pgfa.feature_allocation_distributions.BetaBernoulliFeatureAllocationDistribution(K)
-
-    return pgfa.models.linear_gaussian.Model(data, feat_alloc_dist)
-
-
 def get_model_updater(
         feat_alloc_updater_type='g',
-        annealing_power=0,
+        annealing_power=0.0,
         ibp=True,
         mixture_prob=0.0,
         num_particles=20,
-        test_path='conditional'):
+        test_path='zeros'):
 
     if ibp:
         singletons_updater = pgfa.models.linear_gaussian.PriorSingletonsUpdater()
@@ -159,39 +121,16 @@ def get_model_updater(
     else:
         singletons_updater = None
 
-    if feat_alloc_updater_type == 'dpf':
-        feat_alloc_updater = pgfa.updates.DiscreteParticleFilterUpdater(
-            annealing_power=annealing_power,
-            conditional_update=True,
-            max_particles=num_particles,
-            singletons_updater=singletons_updater,
-            test_path=test_path
-        )
+    updater_kwargs = {'singletons_updater': singletons_updater}
 
-    elif feat_alloc_updater_type == 'g':
-        feat_alloc_updater = pgfa.updates.GibbsUpdater(singletons_updater=singletons_updater)
+    if feat_alloc_updater_type in ['dpf', 'pg']:
+        updater_kwargs['annealing_power'] = annealing_power
 
-    elif feat_alloc_updater_type == 'gpf':
-        feat_alloc_updater = pgfa.updates.GumbelParticleFilterUpdater(
-            annealing_power=annealing_power, max_particles=num_particles
-            )
+        updater_kwargs['num_particles'] = num_particles
 
-    elif feat_alloc_updater_type == 'pg':
-        feat_alloc_updater = pgfa.updates.ParticleGibbsUpdater(
-            annealing_power,
-            conditional_update=True,
-            num_particles=num_particles,
-            resample_scheme='stratified',
-            resample_threshold=0.5,
-            singletons_updater=singletons_updater,
-            test_path=test_path
-        )
+        updater_kwargs['test_path'] = test_path
 
-    elif feat_alloc_updater_type == 'rg':
-        feat_alloc_updater = pgfa.updates.RowGibbsUpdater(singletons_updater=singletons_updater)
-
-    if mixture_prob > 0:
-        feat_alloc_updater = pgfa.updates.GibbsMixtureUpdater(feat_alloc_updater, gibbs_prob=mixture_prob)
+    feat_alloc_updater = get_feat_alloc_updater(mixture_prob, feat_alloc_updater_type, updater_kwargs)
 
     return pgfa.models.linear_gaussian.ModelUpdater(feat_alloc_updater)
 
@@ -208,18 +147,119 @@ def compute_l2_error(data, data_true, params):
 
 
 if __name__ == '__main__':
-#     import line_profiler
-#
-#     profiler = line_profiler.LineProfiler()
-#
-#     profiler.add_function(pgfa.updates.DicreteParticleFilterUpdater.update_row)
-#
-#     profiler.add_function(pgfa.updates.DicreteParticleFilterUpdater._get_new_particle)
-#
-#     profiler.add_function(pgfa.updates.discrete_particle_filter.DicreteParticleFilterUpdater._resample)
-#
-#     profiler.run('main()')
-#
-#     profiler.print_stats()
+    import argparse
 
-    main()
+    parser = argparse.ArgumentParser()
+
+    #===================================================================================================================
+    # Dataset parameters
+    #===================================================================================================================
+    parser.add_argument(
+        '-D', '--num-dims', default=2, type=int,
+        help='''Number of dimensions of data.'''
+    )
+
+    parser.add_argument(
+        '-K', '--num-features', default=10, type=int,
+        help='''Number of features to use. If --ibp is not set this will be used for simulation and fitting.'''
+    )
+
+    parser.add_argument(
+        '-N', '--num-data-points', default=100, type=int,
+        help='''Number of data points to simulate.'''
+    )
+
+    parser.add_argument(
+        '--prop-missing', default=0.0, type=float,
+        help='''Proportion of data set to be missing.'''
+    )
+
+    #===================================================================================================================
+    # Model parameters
+    #===================================================================================================================
+    parser.add_argument(
+        '--alpha', default=1.0, type=float,
+        help='''alpha parameter for the feature allocation prior.'''
+    )
+
+    parser.add_argument(
+        '--tau-v', default=1.0, type=float,
+        help='''Precision parameter for V.'''
+    )
+
+    parser.add_argument(
+        '--tau-x', default=1.0, type=float,
+        help='''Precision parameter for data.'''
+    )
+
+    parser.add_argument(
+        '--ibp', action='store_true', default=False,
+        help='''If set then IBP model will be fit.'''
+    )
+
+    #===================================================================================================================
+    # Sampler options
+    #===================================================================================================================
+    parser.add_argument(
+        '-s', '--sampler', choices=['dpf', 'g', 'pg', 'rg'], default='g',
+        help='''Sampler used to fit the feature allocation model.
+        Choices are: `dpf`-Discrete Particle Filter, `g`-Gibbs, `pg`-Particle Gibbs, `rg`-Row Gibbs
+        '''
+    )
+
+    parser.add_argument(
+        '-t', '--time', default=100, type=float,
+        help='''How long the model fitting will run.'''
+    )
+
+    parser.add_argument(
+        '--mixture-prob', default=0.0, type=float,
+        help='''Probability of performing a Gibbs update when mixing particle and Gibbs samplers.'''
+    )
+
+    parser.add_argument(
+        '--print-freq', default=10, type=float,
+        help='''How often sampler status should be printed.'''
+    )
+
+    #===================================================================================================================
+    # Particle sampler options
+    #===================================================================================================================
+    parser.add_argument(
+        '--annealing-power', default=1.0, type=float,
+        help='''Annealing power for target densities. Has no effect for Gibbs sampler.'''
+    )
+
+    parser.add_argument(
+        '--num-particles', default=20, type=int,
+        help='''Number of particles to use for dpf or pg samplers. Has no effect for Gibbs sampler.'''
+    )
+
+    parser.add_argument(
+        '--test-path',
+        choices=['conditional', 'ones', 'random', 'two-stage', 'unconditional', 'zeros'],
+        default='zeros',
+        help='''Strategy for setting test path for particle sampler. Has no effect for Gibbs sampler.'''
+    )
+
+    #===================================================================================================================
+    # Random seeds
+    #===================================================================================================================
+    parser.add_argument(
+        '--data-seed', default=None, type=int,
+        help='''Random seed for simulating data.'''
+    )
+
+    parser.add_argument(
+        '--param-seed', default=None, type=int,
+        help='''Random seed for simulating initial parameters.'''
+    )
+
+    parser.add_argument(
+        '--run-seed', default=None, type=int,
+        help='''Random seed for running sampler.'''
+    )
+
+    args = parser.parse_args()
+
+    main(args)

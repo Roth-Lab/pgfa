@@ -2,12 +2,12 @@ import numba
 import numpy as np
 
 
-# @numba.njit
+@numba.njit(cache=True)
 def bernoulli_rvs(p):
     return discrete_rvs(np.array([1 - p, p]))
 
 
-# @numba.njit(cache=True)
+@numba.njit(cache=True)
 def discrete_rvs(p):
     p = p / np.sum(p)
     return np.random.multinomial(1, p).argmax()
@@ -15,15 +15,7 @@ def discrete_rvs(p):
 
 def discrete_rvs_gumbel_trick(log_p):
     U = np.random.gumbel(size=len(log_p))
-
     return np.argmax(log_p + U)
-#
-# @numba.njit(cache=True)
-# def discrete_rvs(p):
-#     p = p / np.sum(p)
-#     P = np.cumsum(p)
-#     u = np.random.random_sample()
-#     return np.digitize(np.array(u), P).max()
 
 
 @numba.njit(cache=True)
@@ -211,6 +203,7 @@ def cholesky_log_det(X):
     return 2 * np.sum(np.log(np.diag(X)))
 
 
+@numba.njit(cache=True)
 def conditional_multinomial_resampling(log_w, num_resampled):
     W = exp_normalize(log_w)
 
@@ -226,6 +219,7 @@ def conditional_multinomial_resampling(log_w, num_resampled):
     return indexes
 
 
+@numba.njit(cache=True)
 def multinomial_resampling(log_w, num_resampled):
     W = exp_normalize(log_w)
 
@@ -239,68 +233,7 @@ def multinomial_resampling(log_w, num_resampled):
     return indexes
 
 
-# @numba.njit(cache=True)
-# def conditional_stratified_resampling(log_w, num_resampled):
-#     """ Perform conditional stratified resampling.
-#
-#     This will enforce that 0 is always in the resampled index set.
-#
-#     Parameters
-#     ----------
-#     log_w: (ndarray) Log weights of particles. Can be unnormalized.
-#     num_resampled: (int) Number of indexes to resample.
-#
-#     Returns
-#     -------
-#     indexes: (ndarray) Indexes of resampled values.
-#     """
-#     W = exp_normalize(log_w)
-#
-#     U = np.random.uniform(0, W[0])
-#
-#     U = U - np.floor(num_resampled * U) / num_resampled
-#
-#     positions = U + np.arange(num_resampled) / num_resampled
-#
-#     cumulative_sum = np.cumsum(W)
-#
-#     indexes = [0]
-#
-#     i, j = 1, 0
-#
-#     while i < num_resampled:
-#         if positions[i] < cumulative_sum[j]:
-#             indexes.append(j)
-#
-#             i += 1
-#
-#         else:
-#             j += 1
-#
-#     return indexes
-def conditional_gumbel_resampling(log_w, num_resampled):
-    U = np.random.gumbel(size=len(log_w))
-
-    x = log_w + U
-
-    idxs = np.argsort(x)[-num_resampled:]
-
-    if 0 not in idxs:
-        idxs[0] = 0
-
-    return idxs
-
-
-def gumbel_resampling(log_w, num_resampled):
-    U = np.random.gumbel(size=len(log_w))
-
-    x = log_w + U
-
-    return np.argsort(x)[-num_resampled:]
-#     return np.argpartition(x, -num_resampled)[-num_resampled:]
-
-
-# @numba.njit(cache=True)
+@numba.njit(cache=True)
 def conditional_stratified_resampling(log_w, num_resampled):
     """ Perform conditional stratified resampling.
 
@@ -353,16 +286,12 @@ def conditional_stratified_resampling(log_w, num_resampled):
             j += 1
 
     if 0 not in indexes:
-        print(perm)
-        print(inv_perm)
-        print(positions)
-        print(W)
-        print(cumulative_sum)
+        raise Exception()
 
     return indexes
 
 
-# @numba.njit(cache=True)
+@numba.njit(cache=True)
 def stratified_resampling(log_w, num_resampled):
     """ Perform stratified resampling.
 

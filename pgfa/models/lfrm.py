@@ -7,6 +7,65 @@ from pgfa.math_utils import bernoulli_rvs, do_metropolis_hastings_accept_reject
 import pgfa.models.base
 
 
+def get_model(data, K=None, symmetric=False):
+    if K is None:
+        feat_alloc_dist = pgfa.feature_allocation_distributions.IndianBuffetProcessDistribution()
+
+    else:
+        feat_alloc_dist = pgfa.feature_allocation_distributions.BetaBernoulliFeatureAllocationDistribution(K)
+
+    return Model(data, feat_alloc_dist, symmetric=symmetric)
+
+
+def simulate_data(params, prop_missing=0, symmetric=False):
+    data_true = np.zeros((params.N, params.N))
+
+    if symmetric:
+        for i in range(params.N):
+            for j in range(i, params.N):
+                m = params.Z[i].T @ params.V @ params.Z[j]
+
+                f = np.exp(-m)
+
+                p = 1 / (1 + f)
+
+                data_true[i, j] = bernoulli_rvs(p)
+
+                data_true[j, i] = data_true[i, j]
+
+    else:
+        for i in range(params.N):
+            for j in range(params.N):
+                m = params.Z[i].T @ params.V @ params.Z[j]
+
+                f = np.exp(-m)
+
+                p = 1 / (1 + f)
+
+                data_true[i, j] = bernoulli_rvs(p)
+
+    data = data_true.copy()
+
+    for i in range(params.N):
+        for j in range(params.N):
+            if np.random.random() < prop_missing:
+                data[i, j] = np.nan
+
+    return data, data_true
+
+
+def simulate_params(N, K=None, alpha=1, tau=1):
+    feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K=K)
+
+    Z = feat_alloc_dist.rvs(alpha, N)
+
+    K = Z.shape[1]
+
+    V = scipy.stats.norm.rvs(0, 1 / np.sqrt(tau), size=(K, K))
+
+    return Parameters(alpha, np.ones(2), tau, np.ones(2), V, Z)
+
+
 class Model(pgfa.models.base.AbstractModel):
 
     @staticmethod
@@ -220,7 +279,7 @@ def update_tau(model):
 #=========================================================================
 class DataDistribution(pgfa.models.base.AbstractDataDistribution):
 
-    def __init__(self, symmetric):
+    def __init__(self, symmetric=False):
         self.symmetric = symmetric
 
     def log_p(self, data, params):

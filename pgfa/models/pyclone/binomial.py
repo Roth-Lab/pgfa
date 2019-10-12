@@ -7,6 +7,83 @@ from pgfa.math_utils import log_binomial_coefficient, log_sum_exp
 import pgfa.models.base
 import pgfa.models.pyclone.param_updates as param_updates
 
+from .utils import get_sample_data_point, DataPoint
+
+
+def get_model(data, K=None):
+    if K is None:
+        feat_alloc_dist = pgfa.feature_allocation_distributions.IndianBuffetProcessDistribution()
+
+    else:
+        feat_alloc_dist = pgfa.feature_allocation_distributions.BetaBernoulliFeatureAllocationDistribution(K)
+
+    return Model(data, feat_alloc_dist)
+
+
+def simulate_data(params, eps=1e-3):
+    F = params.F
+
+    data = []
+
+    cn_n = 2
+
+    cn_r = 2
+
+    mu_n = eps
+
+    mu_r = eps
+
+    t = np.ones(params.D)
+
+    for n in range(params.N):
+        phi = params.Z[n] @ F
+
+        cn_total = 2
+
+        cn_major = scipy.stats.randint.rvs(1, cn_total + 1)
+
+        cn_minor = cn_total - cn_major
+
+        cn_var = scipy.stats.randint.rvs(1, cn_major + 1)
+
+        sample_data_points = []
+
+        for d in range(params.D):
+            mu_v = min(cn_var / cn_total, 1 - eps)
+
+            xi = (1 - t[d]) * phi[d] * cn_n * mu_n + t[d] * (1 - phi[d]) * cn_r * mu_r + \
+                t[d] * phi[d] * cn_total * mu_v
+
+            xi /= (1 - t[d]) * phi[d] * cn_n + t[d] * (1 - phi[d]) * cn_r + t[d] * phi[d] * cn_total
+
+            d = scipy.stats.poisson.rvs(1000)
+
+            b = scipy.stats.binom.rvs(d, xi)
+
+            a = d - b
+
+            sample_data_points.append(
+                get_sample_data_point(a, b, cn_major, cn_minor, 2, eps, 1.0)
+            )
+
+        data.append(
+            DataPoint(sample_data_points)
+        )
+
+    return data
+
+
+def simulate_params(D, N, K=None, alpha=1):
+    feat_alloc_dist = pgfa.feature_allocation_distributions.get_feature_allocation_distribution(K=K)
+
+    Z = feat_alloc_dist.rvs(alpha, N)
+
+    K = Z.shape[1]
+
+    V = scipy.stats.gamma.rvs(1, 1, size=(K, D))
+
+    return Parameters(alpha, np.ones(2), V, np.ones(2), Z)
+
 
 class Model(pgfa.models.base.AbstractModel):
 

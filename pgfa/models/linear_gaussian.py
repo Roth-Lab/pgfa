@@ -15,7 +15,7 @@ def get_model(data, K=None):
     else:
         feat_alloc_dist = pgfa.feature_allocation_distributions.BetaBernoulliFeatureAllocationDistribution(K)
 
-    return pgfa.models.linear_gaussian.Model(data, feat_alloc_dist)
+    return Model(data, feat_alloc_dist)
 
 
 def simulate_data(params, prop_missing=0):

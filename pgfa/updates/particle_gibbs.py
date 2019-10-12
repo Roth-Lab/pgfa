@@ -1,7 +1,9 @@
+import numba
 import numpy as np
 
 from pgfa.data_structures import Particle, ParticleSwarm
-from pgfa.math_utils import conditional_multinomial_resampling, conditional_stratified_resampling, discrete_rvs_gumbel_trick, log_sum_exp, multinomial_resampling, stratified_resampling
+from pgfa.math_utils import conditional_multinomial_resampling, conditional_stratified_resampling, log_sum_exp, \
+    multinomial_resampling, stratified_resampling
 from pgfa.updates.base import FeatureAllocationMatrixUpdater
 
 
@@ -12,10 +14,10 @@ class ParticleGibbsUpdater(FeatureAllocationMatrixUpdater):
             annealing_power=0.0,
             conditional_update=True,
             num_particles=10,
-            resample_scheme='multinomial',
+            resample_scheme='stratified',
             resample_threshold=0.5,
             singletons_updater=None,
-            test_path='conditional'):
+            test_path='zeros'):
 
         self.singletons_updater = singletons_updater
 
@@ -47,7 +49,7 @@ class AbstractSequentialMonteCarloRowUpdater(object):
             num_particles=10,
             resample_scheme='stratified',
             resample_threshold=0.5,
-            test_path='condtional'):
+            test_path='zeros'):
 
         self.annealing_power = annealing_power
 
@@ -140,13 +142,9 @@ class AbstractSequentialMonteCarloRowUpdater(object):
         log_norm = log_sum_exp(log_q)
 
         if value is None:
-            value = discrete_rvs_gumbel_trick(log_q)
+            value = bernoulli_rvs_log(log_q[1] - log_norm)
 
-        if np.isneginf(parent_log_p):
-            log_w = -np.inf
-
-        else:
-            log_w = log_norm - parent_log_p
+        log_w = _get_log_w(log_norm, parent_log_p)
 
         return Particle(log_p[value], log_w, parent, parent_path + [value])
 
@@ -301,3 +299,28 @@ class SequentialMonteCarloRowUpdater(AbstractSequentialMonteCarloRowUpdater):
             new_swarm = swarm
 
         return new_swarm
+
+
+@numba.njit(cache=True)
+def bernoulli_rvs_log(log_p):
+    if np.log(np.random.random()) < log_p:
+        return 1
+
+    else:
+        return 0
+
+
+@numba.jit(cache=True)
+def _get_log_w(log_norm, parent_log_p):
+    """ Workaround to slow np.isneginf.
+    """
+    if np.isinf(log_norm) and log_norm < 0:
+        log_w = -np.inf
+
+    elif np.isinf(parent_log_p) and parent_log_p < 0:
+        log_w = -np.inf
+
+    else:
+        log_w = log_norm - parent_log_p
+
+    return log_w

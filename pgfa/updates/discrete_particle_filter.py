@@ -12,20 +12,20 @@ class DiscreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
     def __init__(self,
                  annealing_power=0.0,
                  conditional_update=True,
-                 max_particles=10,
+                 num_particles=10,
                  singletons_updater=None,
-                 test_path='conditional'):
+                 test_path='zeros'):
 
         self.singletons_updater = singletons_updater
 
         if conditional_update:
             self.row_updater = ConditionalDiscreteParticleFilterRowUpdater(
-                annealing_power, max_particles, singletons_updater, test_path
+                annealing_power, num_particles, singletons_updater, test_path
             )
 
         else:
             self.row_updater = DiscreteParticleFilterRowUpdater(
-                annealing_power, max_particles, singletons_updater, test_path
+                annealing_power, num_particles, singletons_updater, test_path
             )
 
     def update_row(self, cols, data, dist, feat_probs, params, row_idx):
@@ -40,10 +40,10 @@ class AbstractDiscreteParticleFilterRowUpdater(FeatureAllocationMatrixUpdater):
     def _update_row(self, cols, data, dist, feat_probs, params, row_idx, test_path):
         raise NotImplementedError
 
-    def __init__(self, annealing_power=0.0, max_particles=10, singletons_updater=None, test_path='conditional'):
+    def __init__(self, annealing_power=0.0, num_particles=10, singletons_updater=None, test_path='zeros'):
         self.annealing_power = annealing_power
 
-        self.max_particles = max_particles
+        self.num_particles = num_particles
 
         self.singletons_updater = singletons_updater
 
@@ -65,7 +65,7 @@ class AbstractDiscreteParticleFilterRowUpdater(FeatureAllocationMatrixUpdater):
         elif self.test_path == 'unconditional':
             updater = DiscreteParticleFilterRowUpdater(
                 annealing_power=self.annealing_power,
-                max_particles=self.max_particles,
+                num_particles=self.num_particles,
                 singletons_updater=self.singletons_updater,
                 test_path='random'
             )
@@ -79,7 +79,7 @@ class AbstractDiscreteParticleFilterRowUpdater(FeatureAllocationMatrixUpdater):
         elif self.test_path == 'two-stage':
             updater = DiscreteParticleFilterRowUpdater(
                 annealing_power=self.annealing_power,
-                max_particles=self.max_particles,
+                num_particles=self.num_particles,
                 singletons_updater=self.singletons_updater,
                 test_path='conditional'
             )
@@ -144,7 +144,7 @@ class DiscreteParticleFilterRowUpdater(AbstractDiscreteParticleFilterRowUpdater)
         params.Z[row_idx, cols] = test_path
 
         for t in range(T):
-            if swarm.num_particles > self.max_particles:
+            if swarm.num_particles > self.num_particles:
                 swarm = self._resample(swarm)
 
             new_swarm = ParticleSwarm()
@@ -175,7 +175,7 @@ class DiscreteParticleFilterRowUpdater(AbstractDiscreteParticleFilterRowUpdater)
 
         log_W[np.isneginf(log_W)] = -1e10
 
-        log_l = scipy.optimize.bisect(_resample_opt_func, log_W.min(), 1000, args=(np.log(self.max_particles), log_W))
+        log_l = scipy.optimize.bisect(_resample_opt_func, log_W.min(), 1000, args=(np.log(self.num_particles), log_W))
 
         new_swarm = ParticleSwarm()
 
@@ -206,7 +206,7 @@ class ConditionalDiscreteParticleFilterRowUpdater(AbstractDiscreteParticleFilter
         swarm.add_particle(0, None)
 
         for t in range(T):
-            if swarm.num_particles > self.max_particles:
+            if swarm.num_particles > self.num_particles:
                 swarm = self._resample(swarm)
 
             new_swarm = ParticleSwarm()
@@ -241,7 +241,7 @@ class ConditionalDiscreteParticleFilterRowUpdater(AbstractDiscreteParticleFilter
 
         log_W[np.isneginf(log_W)] = -1e10
 
-        log_l = scipy.optimize.bisect(_resample_opt_func, log_W.min(), 1000, args=(np.log(self.max_particles), log_W))
+        log_l = scipy.optimize.bisect(_resample_opt_func, log_W.min(), 1000, args=(np.log(self.num_particles), log_W))
 
         new_swarm = ParticleSwarm()
 
@@ -294,115 +294,3 @@ def _resample_opt_func(x, log_N, log_W):
     y[y >= 0] = 0
 
     return log_sum_exp(y) - log_N
-
-#
-# #     def _resample(self, swarm):
-# #         log_W = swarm.log_weights
-# #
-# #         keep_idxs, resample_idxs, log_C = _split_particles(log_W, self.max_particles)
-# #
-# #         num_resampled_particles = self.max_particles - len(keep_idxs)
-# #
-# #         resample_log_w = np.array([swarm.unnormalized_log_weights[i] for i in resample_idxs])
-# #
-# #         if num_resampled_particles > 0:
-# #             if 0 in keep_idxs:
-# #                 resample_idxs_sub = stratified_resampling(resample_log_w, num_resampled_particles)
-# #
-# #             else:
-# #                 assert resample_idxs[0] == 0
-# #
-# #                 resample_idxs_sub = conditional_stratified_resampling(resample_log_w, num_resampled_particles)
-# #
-# #             resample_idxs = [resample_idxs[i] for i in resample_idxs_sub]
-# #
-# #         else:
-# #             resample_idxs = []
-# #
-# #         idxs = sorted(keep_idxs + resample_idxs)
-# #
-# #         try:
-# #             assert idxs[0] == 0
-# #
-# #         except AssertionError:
-# #             print(resample_idxs)
-# #             print(keep_idxs)
-# #             print(-log_C, log_W[0])
-# #
-# #         new_swarm = ParticleSwarm()
-# #
-# #         for i in idxs:
-# #             if i in keep_idxs:
-# #                 new_swarm.add_particle(log_W[i], swarm[i])
-# #
-# #             else:
-# #                 new_swarm.add_particle(-log_C, swarm[i])
-# #
-# #         return new_swarm
-#
-#
-# def _split_particles(log_W, N):
-#
-#     def f(x):
-#         y = log_W + x
-#         y[y > 0] = 0
-#         return log_sum_exp(y)
-#
-#     log_C = scipy.optimize.bisect(lambda x:f(x) - np.log(N), log_W.min(), 1000)
-#
-#     kept, resamp = [], []
-#
-#     for i in range(len(log_W)):
-#         if log_W[i] > -log_C:
-#             kept.append(i)
-#
-#         else:
-#             resamp.append(i)
-#
-#     # TODO: Need this to hack around the case we won't resample, but also don't keep 0 (conditional path)
-#     if (len(kept) == N) and (0 not in kept):
-#         kept, resamp, log_C = _split_particles(log_W, N - 1)
-#
-#     return kept, resamp, log_C
-#
-# # @numba.njit(cache=True)
-# # def _split_particles(log_W, N):
-# #     for idx in np.argsort(log_W):
-# #         log_kappa = log_W[idx]
-# #
-# #         log_ratio = log_W - log_kappa
-# #
-# #         log_ratio[log_ratio > 0] = 0
-# #
-# #         total = log_sum_exp(log_ratio)
-# #
-# #         if total <= np.log(N):
-# #             break
-# #
-# #     A = np.sum(log_W > log_kappa)
-# #
-# #     B = log_sum_exp(log_W[log_W <= log_kappa])
-# #
-# #     log_C = np.log(N - A) - B
-# #
-# #     W = np.exp(log_W)
-# #
-# #     def f(x):
-# #         y = W / x
-# #         y[y >= 1] = 1
-# #         return np.sum(y)
-# #
-# #     print(scipy.optimize.bisect(lambda x:f(x) - N, 0, 1000), np.exp(-log_C), np.exp(log_kappa))
-# #
-# # #     print(log_C, -log_kappa)
-# #
-# #     kept, resamp = [], []
-# #
-# #     for i in range(len(log_W)):
-# #         if log_W[i] > log_kappa:
-# #             kept.append(i)
-# #
-# #         else:
-# #             resamp.append(i)
-# #
-# #     return kept, resamp, log_C

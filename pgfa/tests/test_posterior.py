@@ -5,7 +5,7 @@ from collections import defaultdict, Counter
 import numpy as np
 
 from pgfa.feature_allocation_distributions import BetaBernoulliFeatureAllocationDistribution
-from pgfa.updates import DicreteParticleFilterUpdater, GibbsUpdater, ParticleGibbsUpdater, RowGibbsUpdater
+from pgfa.updates import DiscreteParticleFilterUpdater, GibbsUpdater, ParticleGibbsUpdater, RowGibbsUpdater
 
 from pgfa.tests.exact_posterior import get_exact_posterior
 from pgfa.tests.mocks import MockDataDistribution, MockParams
@@ -17,52 +17,52 @@ class Test(unittest.TestCase):
     D = 10
 
     def test_discrete_particle_filter_updater(self):
-        feat_alloc_updater = DicreteParticleFilterUpdater(max_particles=10)
-  
+        feat_alloc_updater = DiscreteParticleFilterUpdater(annealing_power=1.0, num_particles=10)
+
         model = self._get_model()
-  
+
         self._run_test(feat_alloc_updater, model, num_iters=int(1e4))
 
     def test_discrete_particle_filter_annealed_updater(self):
-        feat_alloc_updater = DicreteParticleFilterUpdater(annealed=True, max_particles=10)
-  
+        feat_alloc_updater = DiscreteParticleFilterUpdater(annealing_power=1.0, num_particles=10)
+
         model = self._get_model()
-  
+
         self._run_test(feat_alloc_updater, model, num_iters=int(1e4))
 
     def test_gibbs(self):
         feat_alloc_updater = GibbsUpdater()
-  
+
         model = self._get_model()
-  
+
         self._run_test(feat_alloc_updater, model, num_iters=int(1e4))
-  
+
     def test_particle_gibbs_updater(self):
-        feat_alloc_updater = ParticleGibbsUpdater(annealed=False, num_particles=10, resample_threshold=0.5)
-   
+        feat_alloc_updater = ParticleGibbsUpdater(annealing_power=0.0, num_particles=10, resample_threshold=0.5)
+
         model = self._get_model()
-   
+
         self._run_test(feat_alloc_updater, model, num_iters=int(1e4))
-   
+
     def test_particle_gibbs_annealed_updater(self):
-        feat_alloc_updater = ParticleGibbsUpdater(annealed=True, num_particles=10, resample_threshold=0.5)
-   
+        feat_alloc_updater = ParticleGibbsUpdater(annealing_power=1.0, num_particles=10, resample_threshold=0.5)
+
         model = self._get_model()
-   
+
         self._run_test(feat_alloc_updater, model, num_iters=int(1e4))
-  
+
     def test_restricted_row_gibbs(self):
         feat_alloc_updater = RowGibbsUpdater(max_cols=3)
-  
+
         model = self._get_model()
-  
+
         self._run_test(feat_alloc_updater, model, num_iters=int(1e4))
-  
+
     def test_row_gibbs(self):
         feat_alloc_updater = RowGibbsUpdater()
-  
+
         model = self._get_model()
-  
+
         self._run_test(feat_alloc_updater, model, num_iters=int(1e4))
 
     def _get_model(self):
