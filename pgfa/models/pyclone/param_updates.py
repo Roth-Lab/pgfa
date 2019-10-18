@@ -134,8 +134,12 @@ def update_V_random_grid_pairwise(model, num_points=10):
 
     if np.all(np.isneginf(log_p_new)) or np.any(np.isnan(log_p_new)):
         return
-
-    idx = discrete_rvs(np.exp(0.5 * np.log(grid) + log_normalize(log_p_new)))
+    
+    try:
+        idx = discrete_rvs(np.exp(0.5 * np.log(grid) + log_normalize(log_p_new)))
+    
+    except ValueError:
+        return
 
     new = ys[idx]
 
