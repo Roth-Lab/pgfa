@@ -44,7 +44,7 @@ class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
 
         for _ in range(4):
             f = np.random.choice([
-                param_updates.update_V_perm,
+                param_updates.update_V,
                 param_updates.update_V_block,
                 param_updates.update_V_block_dim,
                 param_updates.update_V_perm
