@@ -19,7 +19,7 @@ class ParticleGibbsUpdater(FeatureAllocationMatrixUpdater):
             singletons_updater=None,
             test_path='zeros'):
 
-        self.singletons_updater = singletons_updater
+        super().__init__(singletons_updater=singletons_updater)
 
         if conditional_update:
             self.row_updater = ConditionalSequentialMonteCarloRowUpdater(

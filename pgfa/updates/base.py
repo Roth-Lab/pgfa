@@ -4,14 +4,18 @@ import numpy as np
 class FeatureAllocationMatrixUpdater(object):
 
     def __init__(self, singletons_updater=None):
+        self.iter = 0
+
         self.singletons_updater = singletons_updater
 
     def update(self, model):
+        self.iter += 1
+
         num_rows = model.params.Z.shape[0]
 
         for row_idx in np.random.permutation(num_rows):
             cols = model.feat_alloc_dist.get_update_cols(model.params, row_idx)
-            
+
             if len(cols) > 0:
                 feat_probs = model.feat_alloc_dist.get_feature_probs(model.params, row_idx)
 
