@@ -282,7 +282,7 @@ class DataDistribution(pgfa.models.base.AbstractDataDistribution):
     def __init__(self, symmetric=False):
         self.symmetric = symmetric
 
-    def log_p(self, data, params):
+    def _log_p(self, data, params):
         if params.Z.shape[1] == 0:
             log_p = -np.inf
 
@@ -295,7 +295,7 @@ class DataDistribution(pgfa.models.base.AbstractDataDistribution):
 
         return log_p
 
-    def log_p_row(self, data, params, row_idx):
+    def _log_p_row(self, data, params, row_idx):
         if params.Z.shape[1] == 0:
             log_p = -np.inf
 

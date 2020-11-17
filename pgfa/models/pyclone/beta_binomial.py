@@ -114,10 +114,10 @@ class Parameters(pgfa.models.base.AbstractParameters):
 #=========================================================================
 class DataDistribution(pgfa.models.base.AbstractDataDistribution):
 
-    def log_p(self, data, params):
+    def _log_p(self, data, params):
         return _log_p(data, params.precision, params.F, params.Z.astype(float))
 
-    def log_p_row(self, data, params, row_idx):
+    def _log_p_row(self, data, params, row_idx):
         return _log_p_row(data[row_idx], params.precision, params.F, params.Z[row_idx].astype(float))
 
 
@@ -210,4 +210,3 @@ def log_beta_binomial_pdf(n, x, m, s):
 @numba.njit(cache=True)
 def log_binomial_coefficient(n, x):
     return log_factorial(n) - log_factorial(x) - log_factorial(n - x)
-

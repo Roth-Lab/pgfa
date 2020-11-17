@@ -16,10 +16,10 @@ class ParticleGibbsUpdater(FeatureAllocationMatrixUpdater):
             num_particles=10,
             resample_scheme='stratified',
             resample_threshold=0.5,
-            singletons_updater=None,
-            test_path='zeros'):
+            test_path='zeros',
+            **kwargs):
 
-        super().__init__(singletons_updater=singletons_updater)
+        super().__init__(**kwargs)
 
         if conditional_update:
             self.row_updater = ConditionalSequentialMonteCarloRowUpdater(

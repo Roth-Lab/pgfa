@@ -9,14 +9,15 @@ from pgfa.updates.base import FeatureAllocationMatrixUpdater
 
 class DiscreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
 
-    def __init__(self,
-                 annealing_power=0.0,
-                 conditional_update=True,
-                 num_particles=10,
-                 singletons_updater=None,
-                 test_path='zeros'):
+    def __init__(
+            self,
+            annealing_power=0.0,
+            conditional_update=True,
+            num_particles=10,
+            test_path='zeros',
+            **kwargs):
 
-        super().__init__(singletons_updater=singletons_updater)
+        super().__init__(**kwargs)
 
         if conditional_update:
             self.row_updater = ConditionalDiscreteParticleFilterRowUpdater(

@@ -7,8 +7,8 @@ from pgfa.updates.base import FeatureAllocationMatrixUpdater
 
 class RowGibbsUpdater(FeatureAllocationMatrixUpdater):
 
-    def __init__(self, max_cols=None, singletons_updater=None):
-        super().__init__(singletons_updater=singletons_updater)
+    def __init__(self, max_cols=None, **kwargs):
+        super().__init__(**kwargs)
 
         self.max_cols = max_cols
 

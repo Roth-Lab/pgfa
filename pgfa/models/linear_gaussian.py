@@ -46,7 +46,7 @@ def simulate_params(alpha=1, tau_v=1, tau_x=1, D=1, K=None, N=100):
         rowcov=(1 / tau_v) * np.eye(K),
         colcov=np.eye(D)
     )
-    
+
     return Parameters(alpha, np.ones(2), tau_v, np.ones(2), tau_x, np.ones(2), V, Z)
 
 
@@ -211,7 +211,7 @@ def update_tau_x(model):
 #=========================================================================
 class DataDistribution(pgfa.models.base.AbstractDataDistribution):
 
-    def log_p(self, data, params):
+    def _log_p(self, data, params):
         t_x = params.tau_x
 
         V = params.V
@@ -228,7 +228,7 @@ class DataDistribution(pgfa.models.base.AbstractDataDistribution):
 
         return log_p
 
-    def log_p_row(self, data, params, row_idx):
+    def _log_p_row(self, data, params, row_idx):
         return _log_p_row(params.tau_x, data[row_idx], params.Z[row_idx].astype(float), params.V)
 
 
@@ -363,9 +363,9 @@ class PriorSingletonsUpdater(object):
 
         return np.atleast_1d(np.squeeze(np.where(m == 0)))
 
-    
+
 class CollapsedSingletonsUpdater(object):
-        
+
     def update_row(self, model, row_idx):
         alpha = model.params.alpha
         t_v = model.params.tau_v
@@ -437,21 +437,21 @@ class CollapsedSingletonsUpdater(object):
         t_v = params.tau_v
         t_x = params.tau_x
         X = data
-        
+
         Z_new = np.zeros((N, k))
-        
+
         V_new = np.zeros((k, D))
-        
+
         for d in range(D):
             idxs = ~np.isnan(X[:, d])
-            
+
             Z_new_tmp = Z_new[idxs]
-            
+
             M = Z_new_tmp.T @ Z_new_tmp + (t_v / t_x) * np.eye(k)
 
             V_new[:, d] = scipy.stats.multivariate_normal.rvs(
                 scipy.linalg.solve(M, Z_new_tmp.T @ (X[idxs, d] - Z[idxs] @ V[:, d]), assume_a='pos'),
                 (1 / t_x) * scipy.linalg.inv(M)
             )
-        
-        return V_new         
+
+        return V_new

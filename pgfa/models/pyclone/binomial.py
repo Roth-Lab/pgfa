@@ -176,10 +176,10 @@ class Parameters(pgfa.models.base.AbstractParameters):
 #=========================================================================
 class DataDistribution(pgfa.models.base.AbstractDataDistribution):
 
-    def log_p(self, data, params):
+    def _log_p(self, data, params):
         return _log_p(data, params.F, params.Z.astype(float))
 
-    def log_p_row(self, data, params, row_idx):
+    def _log_p_row(self, data, params, row_idx):
         return _log_p_row(data[row_idx], params.F, params.Z[row_idx].astype(float))
 
 
@@ -267,4 +267,3 @@ def log_binomial_pdf(n, x, p):
 
     else:
         return log_binomial_coefficient(n, x) + x * np.log(p) + (n - x) * np.log1p(-p)
-

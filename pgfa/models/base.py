@@ -63,11 +63,19 @@ class AbstractModelUpdater(object):
 
 
 class AbstractDataDistribution(object):
+    def __init__(self, annealing_power=1.0):
+        self.annealing_power = 1.0
 
     def log_p(self, data, params):
-        raise NotImplementedError
+        return self.annealing_power * self._log_p(data, params)
 
     def log_p_row(self, data, params, row_idx):
+        return self.annealing_power * self._log_p_row(data, params, row_idx)
+
+    def _log_p(self, data, params):
+        raise NotImplementedError
+
+    def _log_p_row(self, data, params, row_idx):
         raise NotImplementedError
 
 
@@ -124,4 +132,3 @@ class JointDistribution(object):
         log_p += self.params_dist.log_p(params)
 
         return log_p
-
