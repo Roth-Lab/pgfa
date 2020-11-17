@@ -21,12 +21,12 @@ class DiscreteParticleFilterUpdater(FeatureAllocationMatrixUpdater):
 
         if conditional_update:
             self.row_updater = ConditionalDiscreteParticleFilterRowUpdater(
-                annealing_power, num_particles, singletons_updater, test_path
+                annealing_power, num_particles, self.singletons_updater, test_path
             )
 
         else:
             self.row_updater = DiscreteParticleFilterRowUpdater(
-                annealing_power, num_particles, singletons_updater, test_path
+                annealing_power, num_particles, self.singletons_updater, test_path
             )
 
     def update_row(self, cols, data, dist, feat_probs, params, row_idx):
