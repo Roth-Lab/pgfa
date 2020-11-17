@@ -78,7 +78,8 @@ class Model(pgfa.models.base.AbstractModel):
 class ModelUpdater(pgfa.models.base.AbstractModelUpdater):
 
     def _update_model_params(self, model):
-        update_V(model)
+        if model.params.K > 0:
+            update_V(model)
 
         update_tau_v(model)
 
@@ -138,9 +139,9 @@ class Parameters(pgfa.models.base.AbstractParameters):
         )
 
 
-#=========================================================================
+# =========================================================================
 # Updates
-#=========================================================================
+# =========================================================================
 def update_V(model):
     data = model.data
     params = model.params
@@ -206,9 +207,9 @@ def update_tau_x(model):
     model.params = params
 
 
-#=========================================================================
+# =========================================================================
 # Densities and proposals
-#=========================================================================
+# =========================================================================
 class DataDistribution(pgfa.models.base.AbstractDataDistribution):
 
     def _log_p(self, data, params):
@@ -235,6 +236,9 @@ class DataDistribution(pgfa.models.base.AbstractDataDistribution):
 class ParametersDistribution(pgfa.models.base.AbstractParametersDistribution):
 
     def log_p(self, params):
+        if params.K == 0:
+            return -np.inf
+
         alpha = params.alpha
         t_v = params.tau_v
         t_x = params.tau_x
@@ -290,9 +294,9 @@ def _log_p_row(t_x, x, z, V):
     return log_p
 
 
-#=========================================================================
+# =========================================================================
 # Singletons updaters
-#=========================================================================
+# =========================================================================
 class PriorSingletonsUpdater(object):
 
     def update_row(self, model, row_idx):
