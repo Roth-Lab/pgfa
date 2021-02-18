@@ -64,7 +64,7 @@ class AbstractModelUpdater(object):
 
 class AbstractDataDistribution(object):
     def __init__(self, annealing_power=1.0):
-        self.annealing_power = 1.0
+        self.annealing_power = annealing_power
 
     def log_p(self, data, params):
         return self.annealing_power * self._log_p(data, params)
