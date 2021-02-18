@@ -46,7 +46,7 @@ class DataPoint(object):
         self.sample_data_points = sample_data_points
 
 
-@numba.jitclass([
+@numba.experimental.jitclass([
     ('b', numba.int64),
     ('d', numba.int64),
     ('cn', numba.int64[:, :]),
