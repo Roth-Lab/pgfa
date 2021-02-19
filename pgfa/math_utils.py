@@ -1,3 +1,4 @@
+import math
 import numba
 import numpy as np
 
@@ -252,43 +253,31 @@ def conditional_stratified_resampling(log_w, num_resampled):
 
     W = W / np.sum(W)
 
-    perm = np.random.permutation(len(W))
+    N = len(W)
 
-    inv_perm = np.empty(perm.shape, dtype=np.int64)
+    NW0 = N * W[0]
 
-    inv_perm[perm] = np.arange(len(perm))
-
-    W = W[perm]
-
-    cumulative_sum = np.cumsum(W)
-
-    if perm[0] == 0:
-        U = np.random.uniform(0, cumulative_sum[0])
+    if NW0 <= 1:
+        U = np.random.uniform(0, NW0)
 
     else:
-        U = np.random.uniform(cumulative_sum[perm[0] - 1], cumulative_sum[perm[0]])
+        r = NW0 - math.floor(NW0)
 
-    U = U - np.floor(num_resampled * U) / num_resampled
+        p = r * (math.floor(NW0) + 1) / NW0
 
-    positions = U + np.arange(num_resampled) / num_resampled
-
-    indexes = []
-
-    i, j = 0, 0
-
-    while i < num_resampled:
-        if positions[i] <= cumulative_sum[j]:
-            indexes.append(inv_perm[j])
-
-            i += 1
+        if bernoulli_rvs(p):
+            U = np.random.uniform(0, r)
 
         else:
-            j += 1
+            U = np.random.uniform(r, 1)
 
-    if 0 not in indexes:
-        raise Exception()
+    idxs = _stratified_resampling(log_w, num_resampled, U)
 
-    return indexes
+    assert len(idxs) == N
+
+    assert idxs[0] == 0
+
+    return idxs
 
 
 @numba.njit(cache=True)
@@ -304,25 +293,42 @@ def stratified_resampling(log_w, num_resampled):
     -------
     indexes: (ndarray) Indexes of resampled values.
     """
+    U = np.random.uniform(0, 1)
+
+    return _stratified_resampling(log_w, num_resampled, U)
+
+
+@numba.njit(cache=True)
+def _stratified_resampling(log_w, num_resampled, U):
+    """ Perform stratified resampling.
+
+    Parameters
+    ----------
+    log_w: (ndarray) Log weights of particles. Can be unnormalized.
+    num_resampled: (int) Number of indexes to resample.
+
+    Returns
+    -------
+    indexes: (ndarray) Indexes of resampled values.
+    """
     W = exp_normalize(log_w)
 
-    U = np.random.uniform(0, 1 / num_resampled)
+    N = len(W)
 
-    positions = U + np.arange(num_resampled) / num_resampled
+    v = np.cumsum(N * W)
 
-    cumulative_sum = np.cumsum(W)
+    s = U
 
-    indexes = []
+    m = 0
 
-    i, j = 0, 0
+    idxs = []
 
-    while i < num_resampled:
-        if positions[i] < cumulative_sum[j]:
-            indexes.append(j)
+    for n in range(N):
+        while v[m] < s:
+            m += 1
 
-            i += 1
+        idxs.append(m)
 
-        else:
-            j += 1
+        s += 1
 
-    return indexes
+    return idxs
