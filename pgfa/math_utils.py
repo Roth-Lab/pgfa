@@ -248,6 +248,8 @@ def conditional_stratified_resampling(log_w, num_resampled):
     Returns
     -------
     indexes: (ndarray) Indexes of resampled values.
+
+    Reference: Algorithm 4 of On particle Gibbs sampling
     """
     W = exp_normalize(log_w) + 1e-10
 
@@ -276,6 +278,8 @@ def conditional_stratified_resampling(log_w, num_resampled):
     assert len(idxs) == N
 
     assert idxs[0] == 0
+
+    # TODO: Chopin paper performs a cyclic permutation of labels. Necessary?
 
     return idxs
 
