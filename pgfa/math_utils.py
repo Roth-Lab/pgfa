@@ -234,7 +234,7 @@ def multinomial_resampling(log_w, num_resampled):
     return indexes
 
 
-@numba.njit(cache=True)
+@numba.jit(cache=True)
 def conditional_stratified_resampling(log_w, num_resampled):
     """ Perform conditional stratified resampling.
 
@@ -250,6 +250,8 @@ def conditional_stratified_resampling(log_w, num_resampled):
     indexes: (ndarray) Indexes of resampled values.
 
     Reference: Algorithm 4 of On particle Gibbs sampling
+
+    TODO: Update ref and fix num_sample being ignored
     """
     W = exp_normalize(log_w) + 1e-10
 
@@ -259,27 +261,31 @@ def conditional_stratified_resampling(log_w, num_resampled):
 
     NW0 = N * W[0]
 
+    U = np.zeros(N)
+
     if NW0 <= 1:
-        U = np.random.uniform(0, NW0)
+        U[0] = np.random.uniform(0, NW0)
 
     else:
-        r = NW0 - math.floor(NW0)
+        r = NW0 - np.floor(NW0)
 
-        p = r * (math.floor(NW0) + 1) / NW0
+        p = r * (np.floor(NW0) + 1) / NW0
 
         if bernoulli_rvs(p):
-            U = np.random.uniform(0, r)
+            U[0] = np.random.uniform(0, r)
 
         else:
-            U = np.random.uniform(r, 1)
+            U[0] = np.random.uniform(r, 1)
 
-    idxs = _stratified_resampling(log_w, num_resampled, U)
+    U[1:] = np.random.uniform(0, 1, size=N - 1)
+
+    SU = (U + np.arange(N)) / N
+
+    idxs = inverse_cdf(SU, W)
 
     assert len(idxs) == N
 
     assert idxs[0] == 0
-
-    # TODO: Chopin paper performs a cyclic permutation of labels. Necessary?
 
     return idxs
 
@@ -297,42 +303,31 @@ def stratified_resampling(log_w, num_resampled):
     -------
     indexes: (ndarray) Indexes of resampled values.
     """
-    U = np.random.uniform(0, 1)
-
-    return _stratified_resampling(log_w, num_resampled, U)
+    su = (random.rand(num_resampled) + np.arange(num_resampled)) / num_resampled
+    return inverse_cdf(su, W)
 
 
 @numba.njit(cache=True)
-def _stratified_resampling(log_w, num_resampled, U):
-    """ Perform stratified resampling.
-
-    Parameters
-    ----------
-    log_w: (ndarray) Log weights of particles. Can be unnormalized.
-    num_resampled: (int) Number of indexes to resample.
-
-    Returns
-    -------
-    indexes: (ndarray) Indexes of resampled values.
+def inverse_cdf(su, W):
+    """Inverse CDF algorithm for a finite distribution.
+        Parameters
+        ----------
+        su: (M,) ndarray
+            M sorted uniform variates (i.e. M ordered points in [0,1]).
+        W: (N,) ndarray
+            a vector of N normalized weights (>=0 and sum to one)
+        Returns
+        -------
+        A: (M,) ndarray
+            a vector of M indices in range 0, ..., N-1
     """
-    W = exp_normalize(log_w)
-
-    N = len(W)
-
-    v = np.cumsum(N * W)
-
-    s = U
-
-    m = 0
-
-    idxs = []
-
-    for n in range(N):
-        while v[m] < s:
-            m += 1
-
-        idxs.append(m)
-
-        s += 1
-
-    return idxs
+    j = 0
+    s = W[0]
+    M = su.shape[0]
+    A = np.empty(M, dtype=np.int64)
+    for n in range(M):
+        while su[n] > s:
+            j += 1
+            s += W[j]
+        A[n] = j
+    return A
