@@ -178,9 +178,9 @@ class Parameters(pgfa.models.base.AbstractParameters):
         )
 
 
-#=========================================================================
+# =========================================================================
 # Updates
-#=========================================================================
+# =========================================================================
 def update_V(model, proposal_precision=1):
     if model.symmetric:
         _update_V_symmetric(model, proposal_precision=proposal_precision)
@@ -274,12 +274,14 @@ def update_tau(model):
     model.params = params
 
 
-#=========================================================================
+# =========================================================================
 # Densities and proposals
-#=========================================================================
+# =========================================================================
 class DataDistribution(pgfa.models.base.AbstractDataDistribution):
 
-    def __init__(self, symmetric=False):
+    def __init__(self, annealing_power=1.0, symmetric=False):
+        self.annealing_power = annealing_power
+
         self.symmetric = symmetric
 
     def _log_p(self, data, params):
@@ -432,9 +434,9 @@ def log_sigmoid(x, m):
     else:
         return -np.log1p(r)
 
-#=========================================================================
+# =========================================================================
 # Singletons updaters
-#=========================================================================
+# =========================================================================
 
 
 class PriorSingletonsUpdater(object):
