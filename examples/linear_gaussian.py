@@ -187,7 +187,7 @@ if __name__ == '__main__':
     )
 
     parser.add_argument(
-        '--tau-v', default=1.0, type=float,
+        '--tau-v', default=0.01, type=float,
         help='''Precision parameter for V.'''
     )
 
