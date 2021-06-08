@@ -21,7 +21,10 @@ def get_feat_alloc_updater(annealing_iters=1, annealing_steps=1, mixture_prob=0.
     else:
         raise Exception('Unrecognized feature allocation updater: {}'.format(updater))
 
-    feat_alloc_updater.annealing_schedule = lambda x: min((((x + annealing_iters) // annealing_iters) / annealing_steps), 1.0)
+    feat_alloc_updater.annealing_schedule = lambda x: min(
+        (((x + annealing_iters) // annealing_iters) / annealing_steps),
+        1.0
+    )
 
     if mixture_prob > 0:
         feat_alloc_updater = pgfa.updates.GibbsMixtureUpdater(feat_alloc_updater, gibbs_prob=mixture_prob)
