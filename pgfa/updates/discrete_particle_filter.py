@@ -49,6 +49,8 @@ class AbstractDiscreteParticleFilterRowUpdater(FeatureAllocationMatrixUpdater):
         self.singletons_updater = singletons_updater
 
         self.test_path = test_path
+                    
+        self.max_particles = 0
 
     def update_row(self, cols, data, dist, feat_probs, params, row_idx):
         if self.test_path == 'conditional':
@@ -230,6 +232,9 @@ class ConditionalDiscreteParticleFilterRowUpdater(AbstractDiscreteParticleFilter
                     new_swarm.add_particle(log_W + particle.log_w, particle)
 
             swarm = new_swarm
+            
+            if swarm.num_particles > self.max_particles:
+                self.max_particles = swarm.num_particles
 
         assert np.all(swarm[0].path == conditional_path)
 
